@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68.0.0", "wheel>=0.41.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wpm-backend"
+version = "0.1.0"
+description = "WPM Python FastAPI backend"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[tool.setuptools]
+packages = ["wpm_backend"]
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
+
