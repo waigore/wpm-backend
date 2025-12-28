@@ -1,0 +1,288 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "WPM Backend API",
+    "description": "Wealth Portfolio Manager Backend API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/login": {
+      "post": {
+        "summary": "Login",
+        "description": "POST endpoint for user authentication.\n\nValidates credentials and returns JWT access token.\n\nArgs:\n    request: LoginRequest containing username and password\n    settings: Application settings\n\nReturns:\n    LoginResponse containing access_token and token_type\n\nRaises:\n    HTTPException: 401 if credentials are invalid",
+        "operationId": "login_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/portfolio/all": {
+      "get": {
+        "summary": "Get All Positions Endpoint",
+        "description": "GET endpoint to retrieve all portfolio positions.\n\nRequires JWT authentication.\n\nArgs:\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n\nReturns:\n    PortfolioResponse containing list of positions\n\nRaises:\n    HTTPException: 500 if portfolio data is not available",
+        "operationId": "get_all_positions_endpoint_portfolio_all_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LoginRequest": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Username",
+            "description": "User's login username"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Password",
+            "description": "User's login password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "description": "Request model for login endpoint."
+      },
+      "LoginResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token",
+            "description": "JWT access token for subsequent API requests"
+          },
+          "token_type": {
+            "type": "string",
+            "title": "Token Type",
+            "description": "Type of authentication token",
+            "default": "bearer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token"
+        ],
+        "title": "LoginResponse",
+        "description": "Response model for login endpoint."
+      },
+      "PortfolioResponse": {
+        "properties": {
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/Position"
+            },
+            "type": "array",
+            "title": "Positions",
+            "description": "List of all positions in the composite portfolio"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count",
+            "description": "Total number of positions.",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "positions",
+          "total_count"
+        ],
+        "title": "PortfolioResponse",
+        "description": "Response model for portfolio endpoints."
+      },
+      "Position": {
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "title": "Ticker",
+            "description": "Stock ticker symbol or asset identifier"
+          },
+          "asset_type": {
+            "type": "string",
+            "title": "Asset Type",
+            "description": "Type of asset (e.g., 'Stock', 'Crypto', 'Bond')"
+          },
+          "quantity": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Quantity",
+            "description": "Number of shares/units held"
+          },
+          "average_price": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Average Price",
+            "description": "Average purchase price per share/unit"
+          },
+          "cost_basis": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Cost Basis",
+            "description": "Total cost basis of the position in USD"
+          },
+          "cost_basis_method": {
+            "type": "string",
+            "title": "Cost Basis Method",
+            "description": "Method used to calculate cost basis ('fifo' or 'average')"
+          },
+          "current_price": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Price",
+            "description": "Current market price per share/unit in USD"
+          },
+          "market_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Value",
+            "description": "Current total market value of the position in USD"
+          },
+          "unrealized_gain_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Gain Loss",
+            "description": "Unrealized gain or loss on the position in USD"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticker",
+          "asset_type",
+          "quantity",
+          "average_price",
+          "cost_basis",
+          "cost_basis_method"
+        ],
+        "title": "Position",
+        "description": "Model representing a single portfolio position."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "OAuth2PasswordBearer": {
+        "type": "oauth2",
+        "flows": {
+          "password": {
+            "scopes": {},
+            "tokenUrl": "/login"
+          }
+        }
+      }
+    }
+  }
+}

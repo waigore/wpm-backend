@@ -1,0 +1,17 @@
+[run]
+source = wpm_backend
+omit = 
+    */tests/*
+    */__pycache__/*
+    */__init__.py
+    wpm_backend/cli.py
+
+[report]
+precision = 2
+show_missing = True
+skip_covered = False
+fail_under = 80
+
+[html]
+directory = htmlcov
+

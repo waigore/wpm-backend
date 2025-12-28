@@ -27,6 +27,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
     - **__init__.py**: Utils module initialization
     - **logging_config.py**: Centralized logging configuration setup
     - **openapi_generator.py**: Utility to generate OpenAPI JSON specification from FastAPI app
+  - **cli.py**: Interactive command-line utility for testing and interacting with the API
 - **tests/**
   - **__init__.py**: Tests package initialization
   - **test_auth.py**: Unit and integration tests for authentication module
@@ -195,6 +196,51 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 
 **Artifacts**:
 - `SPEC/openapi.json`: Generated OpenAPI 3.0 specification file
+
+### wpm_backend/cli.py
+**Location**: `wpm_backend/cli.py`
+
+**Responsibilities**:
+- Provide an interactive command-line interface for testing and interacting with wpm-backend APIs
+- Use FastAPI's TestClient to start up the API instance without running a server
+- Manage authentication tokens during the interactive session
+- Execute API commands and display results in structured JSON format
+
+**Key Classes**:
+- `InteractiveCLI`: Manages the interactive CLI session, token storage, and command routing
+
+**Key Functions**:
+- `main() -> None`: Entry point function that initializes the FastAPI app using `create_app()`, creates a TestClient instance, and starts the interactive command loop. This function is registered as the `wpm-backend-cli` entry point in pyproject.toml.
+- `InteractiveCLI.__init__(client: TestClient)`: Initializes the CLI with a TestClient instance and sets up token storage.
+- `InteractiveCLI.login_command() -> None`: Prompts user for username and password (using `getpass.getpass()` for secure password input), calls POST `/login` endpoint via TestClient, stores the JWT access token in memory for subsequent authenticated requests. Displays success or error messages.
+- `InteractiveCLI.portfolio_all_command() -> None`: Calls GET `/portfolio/all` endpoint via TestClient with stored JWT token in Authorization header. Displays the response in formatted JSON using `json.dumps()` with `indent=2`. Handles authentication errors by prompting user to login if token is missing or expired.
+- `InteractiveCLI.run() -> None`: Main interactive loop that prompts for commands, parses input, routes to appropriate command handlers, and continues until user enters `exit` or `quit`.
+- `InteractiveCLI.show_help() -> None`: Displays list of available commands and their descriptions.
+
+**Key Variables**:
+- `InteractiveCLI.client`: TestClient instance for making API requests
+- `InteractiveCLI.token`: JWT access token stored in memory during the session (None if not logged in)
+
+**Command Structure**:
+- `login`: Prompts for username and password, authenticates via `/login` endpoint, stores token
+- `portfolio all`: Retrieves all portfolio positions via `/portfolio/all` endpoint, displays formatted JSON
+- `help`: Lists available commands and their descriptions
+- `exit`/`quit`: Terminates the interactive session
+
+**Implementation Details**:
+- Uses `from fastapi.testclient import TestClient` with `app = create_app()` to initialize the API
+- TestClient automatically triggers FastAPI startup events, ensuring `composite_portfolio` and `price_service` are initialized in `app.state`
+- Token is stored as instance variable and cleared on session end
+- Uses `getpass.getpass()` for secure password input (masks password)
+- Uses `json.dumps()` with `indent=2` for pretty-printed JSON output
+- Handles HTTP errors (401, 500, etc.) with user-friendly error messages
+- Simple string splitting for command parsing (e.g., `"portfolio all"` splits into `["portfolio", "all"]`)
+
+**Artifacts**: None
+
+**Entry Point Configuration**:
+- Registered in `pyproject.toml` under `[project.scripts]` as `wpm-backend-cli = "wpm_backend.cli:main"`
+- After package installation, the utility can be invoked from the command line as `wpm-backend-cli`
 
 ## Data Models
 

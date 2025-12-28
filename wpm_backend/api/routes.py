@@ -3,6 +3,10 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
+from starlette.requests import Request
+
+from wpm.portfolio import CompositePortfolio
+from wpm.pricing import PriceService
 
 from wpm_backend.auth.auth import authenticate_user, create_access_token, verify_token
 from wpm_backend.config import Settings, get_settings
@@ -85,11 +89,57 @@ def get_current_user(
     return username
 
 
+def get_composite_portfolio(request: Request) -> CompositePortfolio:
+    """
+    Dependency function to get composite portfolio from app state.
+
+    Args:
+        request: FastAPI Request object to access app.state
+
+    Returns:
+        CompositePortfolio instance from app state
+
+    Raises:
+        HTTPException: 500 if portfolio data is not available
+    """
+    portfolio = getattr(request.app.state, "composite_portfolio", None)
+    if portfolio is None:
+        logger.error("Composite portfolio not available in application state")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Portfolio data not available",
+        )
+    return portfolio
+
+
+def get_price_service(request: Request) -> PriceService:
+    """
+    Dependency function to get price service from app state.
+
+    Args:
+        request: FastAPI Request object to access app.state
+
+    Returns:
+        PriceService instance from app state
+
+    Raises:
+        HTTPException: 500 if price service is not available
+    """
+    price_service = getattr(request.app.state, "price_service", None)
+    if price_service is None:
+        logger.error("PriceService not available in application state")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Price service not available",
+        )
+    return price_service
+
+
 @router.get("/portfolio/all", response_model=PortfolioResponse)
 def get_all_positions_endpoint(
-    request: Request,
     username: str = Depends(get_current_user),
-    settings: Settings = Depends(get_settings),
+    composite_portfolio: CompositePortfolio = Depends(get_composite_portfolio),
+    price_service: PriceService = Depends(get_price_service),
 ) -> PortfolioResponse:
     """
     GET endpoint to retrieve all portfolio positions.
@@ -97,9 +147,9 @@ def get_all_positions_endpoint(
     Requires JWT authentication.
 
     Args:
-        request: FastAPI Request object to access app.state
         username: Authenticated username (from token)
-        settings: Application settings
+        composite_portfolio: Composite portfolio instance (injected via dependency)
+        price_service: Price service instance (injected via dependency)
 
     Returns:
         PortfolioResponse containing list of positions
@@ -108,26 +158,6 @@ def get_all_positions_endpoint(
         HTTPException: 500 if portfolio data is not available
     """
     logger.info(f"Portfolio request received from user: {username}")
-
-    # Get composite portfolio from application state
-    composite_portfolio = getattr(request.app.state, "composite_portfolio", None)
-
-    if composite_portfolio is None:
-        logger.error("Composite portfolio not available in application state")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Portfolio data not available",
-        )
-
-    # Get shared PriceService instance from application state
-    price_service = getattr(request.app.state, "price_service", None)
-
-    if price_service is None:
-        logger.error("PriceService not available in application state")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Price service not available",
-        )
 
     # Get all positions
     positions = get_all_positions(composite_portfolio, price_service)

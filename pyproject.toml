@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = []
 
+[project.scripts]
+wpm-backend-cli = "wpm_backend.cli:main"
+
 [tool.setuptools]
 packages = ["wpm_backend"]
 
