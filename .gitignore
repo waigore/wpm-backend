@@ -209,3 +209,6 @@ __marimo__/
 # WPM Backend
 import/
 logs/
+
+# macOS
+.DS_Store
