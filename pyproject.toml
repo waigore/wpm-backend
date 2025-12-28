@@ -31,6 +31,7 @@ dev = [
 
 [project.scripts]
 wpm-backend-cli = "wpm_backend.cli:main"
+wpm-backend-generate-openapi = "wpm_backend.utils.openapi_generator:main"
 
 [tool.setuptools]
 packages = ["wpm_backend"]

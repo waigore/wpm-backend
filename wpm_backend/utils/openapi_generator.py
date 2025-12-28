@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import sys
 from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
@@ -33,4 +34,27 @@ def generate_openapi_spec(app: FastAPI, output_path: str = "SPEC/openapi.json") 
     except Exception as e:
         logger.error(f"Failed to generate OpenAPI specification: {e}", exc_info=True)
         raise
+
+
+def main() -> None:
+    """
+    Entry point for the OpenAPI generation CLI command.
+
+    Creates a FastAPI app instance and generates the OpenAPI specification file.
+    """
+    try:
+        from wpm_backend.main import create_app
+
+        # Create FastAPI app instance
+        app = create_app()
+
+        # Generate OpenAPI specification
+        generate_openapi_spec(app)
+
+        print(f"OpenAPI specification generated: SPEC/openapi.json")
+    except Exception as e:
+        print(f"Error: Failed to generate OpenAPI specification: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
