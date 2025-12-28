@@ -4,7 +4,7 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-wpm = {ref = "dev", git = "https://github.com/waigore/wpmv2.git"}
+waiz-wpm = {ref = "dev", git = "https://github.com/waigore/wpmv2.git"}
 fastapi = ">=0.104.0"
 uvicorn = {extras = ["standard"], version = ">=0.24.0"}
 pydantic = ">=2.0.0"
