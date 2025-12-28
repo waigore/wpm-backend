@@ -10,7 +10,7 @@ from wpm_backend.services.portfolio_service import get_all_positions
 
 
 def test_get_all_positions_service(mock_composite_portfolio, mock_price_service):
-    """Test get_all_positions() service function."""
+    """Test get_all_positions() service function with default sorting."""
     from wpm.models import Asset
 
     # Mock fetch_price_map
@@ -25,7 +25,7 @@ def test_get_all_positions_service(mock_composite_portfolio, mock_price_service)
 
     assert len(positions) == 2
 
-    # Check first position (AAPL)
+    # With default sorting (ticker asc), AAPL should come first
     position1 = positions[0]
     assert position1.ticker == "AAPL"
     assert position1.asset_type == "Stock"
@@ -96,7 +96,7 @@ def test_get_all_positions_partial_prices(mock_composite_portfolio, mock_price_s
 
 
 def test_portfolio_all_endpoint(client_with_portfolio, test_settings):
-    """Test /portfolio/all endpoint."""
+    """Test /portfolio/all endpoint with default pagination."""
     # First, get a token
     login_response = client_with_portfolio.post(
         "/login",
@@ -121,10 +121,17 @@ def test_portfolio_all_endpoint(client_with_portfolio, test_settings):
 
     assert response.status_code == 200
     data = response.json()
-    assert "positions" in data
-    assert "total_count" in data
-    assert data["total_count"] == len(data["positions"])
-    assert len(data["positions"]) == 2
+    # Check paginated response format
+    assert "items" in data
+    assert "total" in data
+    assert "page" in data
+    assert "size" in data
+    assert "pages" in data
+    assert data["total"] == 2
+    assert data["page"] == 1
+    assert data["size"] == 20
+    assert data["pages"] == 1
+    assert len(data["items"]) == 2
 
 
 def test_portfolio_all_endpoint_no_portfolio(client, test_settings):
@@ -214,6 +221,43 @@ def test_average_price_calculation(mock_composite_portfolio, mock_price_service)
     assert position2.average_price == expected_avg_price
 
 
+def test_get_all_positions_sorting_service(mock_composite_portfolio, mock_price_service):
+    """Test get_all_positions() service function with sorting."""
+    from wpm.models import Asset
+
+    assets = list(mock_composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,  # AAPL price
+        assets[1]: 150.00,  # GOOGL price
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Test sorting by ticker descending
+        positions = get_all_positions(
+            mock_composite_portfolio, mock_price_service, sort_by="ticker", sort_order="desc"
+        )
+
+    assert len(positions) == 2
+    # Should be sorted descending, so GOOGL comes first
+    assert positions[0].ticker == "GOOGL"
+    assert positions[1].ticker == "AAPL"
+
+
+def test_get_all_positions_sorting_invalid_field(mock_composite_portfolio, mock_price_service):
+    """Test get_all_positions() raises ValueError for invalid sort_by field."""
+    assets = list(mock_composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        with pytest.raises(ValueError, match="Invalid sort_by field"):
+            get_all_positions(
+                mock_composite_portfolio, mock_price_service, sort_by="invalid_field"
+            )
+
+
 def test_get_all_positions_exception_handling(mock_composite_portfolio, mock_price_service):
     """Test get_all_positions() handles exceptions when transforming positions."""
     from wpm.models import Asset
@@ -246,4 +290,411 @@ def test_get_all_positions_exception_handling(mock_composite_portfolio, mock_pri
 
     # Should still return the 2 valid positions, skipping the bad one
     assert len(positions) == 2
+
+
+# Pagination tests
+def test_portfolio_pagination_default_page_size(client_with_portfolio, test_settings):
+    """Test pagination with default page size."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/all",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["size"] == 20  # Default page size
+    assert data["page"] == 1  # Default page
+
+
+def test_portfolio_pagination_custom_page_size(client_with_portfolio, test_settings):
+    """Test pagination with custom page size."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/all?size=1",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["size"] == 1
+    assert data["page"] == 1
+    assert data["total"] == 2
+    assert data["pages"] == 2
+    assert len(data["items"]) == 1
+
+
+def test_portfolio_pagination_page_navigation(client_with_portfolio, test_settings):
+    """Test pagination page navigation."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Get first page
+        response1 = client_with_portfolio.get(
+            "/portfolio/all?size=1&page=1",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response1.status_code == 200
+        data1 = response1.json()
+        assert data1["page"] == 1
+        assert len(data1["items"]) == 1
+
+        # Get second page
+        response2 = client_with_portfolio.get(
+            "/portfolio/all?size=1&page=2",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response2.status_code == 200
+        data2 = response2.json()
+        assert data2["page"] == 2
+        assert len(data2["items"]) == 1
+
+        # Verify different items on different pages
+        assert data1["items"][0]["ticker"] != data2["items"][0]["ticker"]
+
+
+def test_portfolio_pagination_page_beyond_total(client_with_portfolio, test_settings):
+    """Test pagination when requesting page beyond total pages."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/all?size=1&page=10",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["page"] == 10
+    assert len(data["items"]) == 0  # Empty page
+
+
+def test_portfolio_pagination_max_page_size(client_with_portfolio, test_settings):
+    """Test pagination respects maximum page size limit."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Try to request more than max page size
+        response = client_with_portfolio.get(
+            "/portfolio/all?size=200",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    # Should return validation error
+    assert response.status_code == 422
+
+
+# Sorting tests
+def test_portfolio_sorting_by_ticker_asc(client_with_portfolio, test_settings):
+    """Test sorting by ticker in ascending order."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/all?sort_by=ticker&sort_order=asc",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    items = data["items"]
+    # Should be sorted by ticker ascending (AAPL before GOOGL)
+    assert items[0]["ticker"] == "AAPL"
+    assert items[1]["ticker"] == "GOOGL"
+
+
+def test_portfolio_sorting_by_ticker_desc(client_with_portfolio, test_settings):
+    """Test sorting by ticker in descending order."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/all?sort_by=ticker&sort_order=desc",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    items = data["items"]
+    # Should be sorted by ticker descending (GOOGL before AAPL)
+    assert items[0]["ticker"] == "GOOGL"
+    assert items[1]["ticker"] == "AAPL"
+
+
+def test_portfolio_sorting_by_quantity(client_with_portfolio, test_settings):
+    """Test sorting by quantity."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/all?sort_by=quantity&sort_order=asc",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    items = data["items"]
+    # AAPL has 100.0, GOOGL has 50.0, so GOOGL should come first in ascending order
+    assert items[0]["quantity"] == 50.0
+    assert items[1]["quantity"] == 100.0
+
+
+def test_portfolio_sorting_by_cost_basis(client_with_portfolio, test_settings):
+    """Test sorting by cost_basis."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/all?sort_by=cost_basis&sort_order=asc",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    items = data["items"]
+    # GOOGL has 5000.0, AAPL has 15000.0, so GOOGL should come first
+    assert items[0]["cost_basis"] == 5000.0
+    assert items[1]["cost_basis"] == 15000.0
+
+
+def test_portfolio_sorting_default_ticker_asc(client_with_portfolio, test_settings):
+    """Test default sorting (ticker ascending)."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/all",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    items = data["items"]
+    # Default should be ticker ascending
+    assert items[0]["ticker"] == "AAPL"
+    assert items[1]["ticker"] == "GOOGL"
+
+
+def test_portfolio_sorting_invalid_field(client_with_portfolio, test_settings):
+    """Test sorting with invalid sort_by field."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/all?sort_by=invalid_field",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 400
+    assert "Invalid sort_by field" in response.json()["detail"]
+
+
+def test_portfolio_sorting_all_fields(client_with_portfolio, test_settings):
+    """Test that all Position fields are sortable."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    valid_fields = [
+        "ticker",
+        "asset_type",
+        "quantity",
+        "average_price",
+        "cost_basis",
+        "cost_basis_method",
+        "current_price",
+        "market_value",
+        "unrealized_gain_loss",
+    ]
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        for field in valid_fields:
+            response = client_with_portfolio.get(
+                f"/portfolio/all?sort_by={field}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert response.status_code == 200, f"Field {field} should be sortable"
+
+
+def test_portfolio_sorting_with_none_values(client_with_portfolio, test_settings):
+    """Test sorting handles None values correctly."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    # Set one price to None to test None handling
+    mock_price_map = {
+        assets[0]: None,  # AAPL has no price
+        assets[1]: 150.00,  # GOOGL has price
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Sort by current_price ascending - None should come first
+        response = client_with_portfolio.get(
+            "/portfolio/all?sort_by=current_price&sort_order=asc",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    items = data["items"]
+    # None value should come first in ascending order
+    assert items[0]["current_price"] is None
+    assert items[1]["current_price"] == 150.00
+
+
+# Combined pagination and sorting tests
+def test_portfolio_pagination_and_sorting(client_with_portfolio, test_settings):
+    """Test combined pagination and sorting."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Get first page, sorted by ticker descending
+        response = client_with_portfolio.get(
+            "/portfolio/all?page=1&size=1&sort_by=ticker&sort_order=desc",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["page"] == 1
+    assert data["size"] == 1
+    assert len(data["items"]) == 1
+    # Should be sorted descending, so GOOGL should be first
+    assert data["items"][0]["ticker"] == "GOOGL"
 

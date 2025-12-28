@@ -4,6 +4,7 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi_pagination import add_pagination
 
 from wpm_backend.api.routes import router
 from wpm_backend.config import Settings, get_settings
@@ -59,6 +60,9 @@ def create_app() -> FastAPI:
 
     # Register API routers
     app.include_router(router)
+
+    # Enable pagination support
+    add_pagination(app)
 
     # Initialize app state variables (will be populated in startup)
     app.state.composite_portfolio = None

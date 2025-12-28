@@ -1,7 +1,7 @@
 """Business logic for portfolio operations, wraps wpm library calls."""
 
 import logging
-from typing import List
+from typing import List, Optional
 
 from wpm.models import Asset, Position as WPMPosition
 from wpm.portfolio import CompositePortfolio, fetch_price_map
@@ -11,9 +11,25 @@ from wpm_backend.models.portfolio import Position
 
 logger = logging.getLogger(__name__)
 
+# Valid sortable fields for Position model
+VALID_SORT_FIELDS = {
+    "ticker",
+    "asset_type",
+    "quantity",
+    "average_price",
+    "cost_basis",
+    "cost_basis_method",
+    "current_price",
+    "market_value",
+    "unrealized_gain_loss",
+}
+
 
 def get_all_positions(
-    composite: CompositePortfolio, price_service: PriceService
+    composite: CompositePortfolio,
+    price_service: PriceService,
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = "asc",
 ) -> List[Position]:
     """
     Retrieve all positions from the wpm composite portfolio and transform to API models.
@@ -21,9 +37,14 @@ def get_all_positions(
     Args:
         composite: CompositePortfolio instance from wpm library
         price_service: PriceService instance for fetching current prices
+        sort_by: Field name to sort by (default: None, which defaults to "ticker")
+        sort_order: Sort order - "asc" or "desc" (default: "asc")
 
     Returns:
-        List of Position API models
+        Sorted list of Position API models
+
+    Raises:
+        ValueError: If sort_by is not a valid Position field
     """
     logger.info("Retrieving all positions from composite portfolio")
 
@@ -77,5 +98,42 @@ def get_all_positions(
             continue
 
     logger.info(f"Transformed {len(api_positions)} positions to API models")
-    return api_positions
+
+    # Apply sorting if requested
+    if sort_by is None:
+        sort_by = "ticker"
+    
+    # Validate sort_by field
+    if sort_by not in VALID_SORT_FIELDS:
+        raise ValueError(f"Invalid sort_by field: {sort_by}. Valid fields: {sorted(VALID_SORT_FIELDS)}")
+    
+    # Normalize sort_order
+    if sort_order not in ("asc", "desc"):
+        sort_order = "asc"
+    
+    # Sort the positions
+    reverse = sort_order == "desc"
+    
+    def get_sort_key(position: Position):
+        """Get sort key for a position, handling None values."""
+        value = getattr(position, sort_by, None)
+        
+        # Handle None values: None sorts to beginning for asc, end for desc
+        # Use tuple (is_none_flag, value) where:
+        # - For ascending: (0, sentinel) for None, (1, value) for non-None
+        #   This makes None come first since (0, ...) < (1, ...)
+        # - For descending: (1, sentinel) for None, (0, value) for non-None
+        #   With reverse=True, (1, ...) > (0, ...), so None comes last
+        if value is None:
+            # Use a sentinel value that won't interfere with actual values
+            sentinel = float('-inf') if not reverse else float('inf')
+            return (1 if reverse else 0, sentinel)
+        
+        # For non-None values
+        return (0 if reverse else 1, value)
+    
+    sorted_positions = sorted(api_positions, key=get_sort_key, reverse=reverse)
+    
+    logger.info(f"Sorted {len(sorted_positions)} positions by {sort_by} ({sort_order})")
+    return sorted_positions
 

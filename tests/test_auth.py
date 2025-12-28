@@ -172,8 +172,12 @@ def test_protected_endpoint_with_valid_token(client_with_portfolio, test_setting
 
     assert response.status_code == 200
     data = response.json()
-    assert "positions" in data
-    assert "total_count" in data
+    # Response now uses paginated format
+    assert "items" in data
+    assert "total" in data
+    assert "page" in data
+    assert "size" in data
+    assert "pages" in data
 
 
 def test_protected_endpoint_without_token(client_with_portfolio):

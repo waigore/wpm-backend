@@ -48,25 +48,99 @@
     "/portfolio/all": {
       "get": {
         "summary": "Get All Positions Endpoint",
-        "description": "GET endpoint to retrieve all portfolio positions.\n\nRequires JWT authentication.\n\nArgs:\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n\nReturns:\n    PortfolioResponse containing list of positions\n\nRaises:\n    HTTPException: 500 if portfolio data is not available",
+        "description": "GET endpoint to retrieve all portfolio positions with pagination and sorting support.\n\nRequires JWT authentication.\n\nArgs:\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n    page: Page number (1-indexed, default: 1)\n    size: Number of items per page (default: 20, max: 100)\n    sort_by: Field to sort by (default: \"ticker\")\n    sort_order: Sort order - \"asc\" or \"desc\" (default: \"asc\")\n\nReturns:\n    Page[Position] containing paginated list of positions with metadata\n\nRaises:\n    HTTPException: 400 if sort_by field is invalid\n    HTTPException: 500 if portfolio data is not available",
         "operationId": "get_all_positions_endpoint_portfolio_all_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Field to sort by",
+              "default": "ticker",
+              "title": "Sort By"
+            },
+            "description": "Field to sort by"
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(asc|desc)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort order: 'asc' or 'desc'",
+              "default": "asc",
+              "title": "Sort Order"
+            },
+            "description": "Sort order: 'asc' or 'desc'"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PortfolioResponse"
+                  "$ref": "#/components/schemas/Page_Position_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
           }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
+        }
       }
     }
   },
@@ -129,30 +203,45 @@
         "title": "LoginResponse",
         "description": "Response model for login endpoint."
       },
-      "PortfolioResponse": {
+      "Page_Position_": {
         "properties": {
-          "positions": {
+          "items": {
             "items": {
               "$ref": "#/components/schemas/Position"
             },
             "type": "array",
-            "title": "Positions",
-            "description": "List of all positions in the composite portfolio"
+            "title": "Items"
           },
-          "total_count": {
+          "total": {
             "type": "integer",
-            "title": "Total Count",
-            "description": "Total number of positions.",
-            "readOnly": true
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
           }
         },
         "type": "object",
         "required": [
-          "positions",
-          "total_count"
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
         ],
-        "title": "PortfolioResponse",
-        "description": "Response model for portfolio endpoints."
+        "title": "Page[Position]"
       },
       "Position": {
         "properties": {

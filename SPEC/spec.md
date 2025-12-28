@@ -111,7 +111,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 
 **Key Functions**:
 - `login(request: LoginRequest, settings: Settings = Depends(get_settings)) -> LoginResponse`: POST endpoint at `/login` that accepts username/password, validates credentials via auth module, and returns JWT access token with 1-hour expiry. Logs request/response at INFO level.
-- `get_all_positions(token: str = Depends(get_current_user), settings: Settings = Depends(get_settings)) -> PortfolioResponse`: GET endpoint at `/portfolio/all` that requires JWT authentication. Verifies token via auth module, retrieves CompositePortfolio from application state, creates PriceService instance, calls portfolio_service.get_all_positions() to fetch and transform positions, then returns PortfolioResponse. Logs request/response at INFO level.
+- `get_all_positions_endpoint(...) -> Page[Position]`: GET endpoint at `/portfolio/all` that requires JWT authentication. Supports pagination and sorting via query parameters: `page` (default: 1), `size` (default: 20, max: 100), `sort_by` (default: "ticker"), and `sort_order` (default: "asc"). Verifies token via auth module, retrieves CompositePortfolio from application state, creates PriceService instance, calls portfolio_service.get_all_positions() with sorting parameters to fetch and transform positions, applies pagination using fastapi-pagination, then returns Page[Position]. Validates sort_by against allowed Position fields and returns 400 Bad Request for invalid fields. Logs request/response at INFO level.
 - `get_current_user(token: str = Depends(oauth2_scheme), settings: Settings = Depends(get_settings)) -> str`: Dependency function that extracts JWT token from Authorization header using OAuth2PasswordBearer, verifies it via auth module, and returns username. Raises HTTPException with 401 status if token is invalid or expired. Used to protect endpoints requiring authentication.
 
 **Artifacts**: None
@@ -127,7 +127,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - Manage PriceService for fetching current asset prices
 
 **Key Functions**:
-- `get_all_positions(composite: CompositePortfolio, price_service: PriceService) -> List[Position]`: Retrieves all positions from the wpm composite portfolio using `composite.get_positions()` which returns `Dict[Asset, Position]`. Fetches current prices using `wpm.portfolio.fetch_price_map(composite, price_service)` which returns `Dict[Asset, Optional[float]]`. Transforms wpm Position objects (containing Asset, Decimal quantity, cost_basis, cost_basis_method) into API Position models. Calculates market_value and unrealized_gain_loss when prices are available. Logs function entry/exit and wpm library calls at INFO level. Returns list of API Position objects.
+- `get_all_positions(composite: CompositePortfolio, price_service: PriceService, sort_by: Optional[str] = None, sort_order: Optional[str] = "asc") -> List[Position]`: Retrieves all positions from the wpm composite portfolio using `composite.get_positions()` which returns `Dict[Asset, Position]`. Fetches current prices using `wpm.portfolio.fetch_price_map(composite, price_service)` which returns `Dict[Asset, Optional[float]]`. Transforms wpm Position objects (containing Asset, Decimal quantity, cost_basis, cost_basis_method) into API Position models. Calculates market_value and unrealized_gain_loss when prices are available. Applies sorting based on `sort_by` and `sort_order` parameters. Validates `sort_by` against Position model fields. Handles None values for optional fields (current_price, market_value, unrealized_gain_loss) by treating None as smallest value. Defaults to ticker ascending if no sort parameters provided. Logs function entry/exit and wpm library calls at INFO level. Returns sorted list of API Position objects.
 
 **Artifacts**: None
 
@@ -339,10 +339,42 @@ Model representing a single position in the portfolio. This model is based on th
   - Validation: Can be negative (loss) or positive (gain), None if market_value unavailable
   - Example: 2525.0 or None
 
-### PortfolioResponse
+### Page[Position]
+**Location**: `fastapi_pagination.Page`
+
+Paginated response model for the `/portfolio/all` endpoint. Uses fastapi-pagination library for standardized pagination.
+
+**Fields**:
+- `items` (List[Position], required)
+  - Description: List of positions in the current page
+  - Validation: List of valid Position objects
+  - Example: [Position(ticker="AAPL", quantity=100.0, ...), ...]
+  
+- `total` (int, required)
+  - Description: Total number of items across all pages
+  - Validation: Non-negative integer
+  - Example: 100
+  
+- `page` (int, required)
+  - Description: Current page number (1-indexed)
+  - Validation: Positive integer, >= 1
+  - Example: 1
+  
+- `size` (int, required)
+  - Description: Number of items per page
+  - Validation: Positive integer, >= 1, <= 100
+  - Example: 20
+  
+- `pages` (int, required)
+  - Description: Total number of pages
+  - Calculation: `ceil(total / size)`
+  - Validation: Non-negative integer
+  - Example: 5
+
+### PortfolioResponse (Deprecated)
 **Location**: `wpm_backend/models/portfolio.py`
 
-Response model for the `/portfolio/all` endpoint.
+**Note**: This model is deprecated. The `/portfolio/all` endpoint now returns `Page[Position]` instead.
 
 **Fields**:
 - `positions` (List[Position], required)
@@ -365,6 +397,7 @@ Response model for the `/portfolio/all` endpoint.
 - **python-dotenv** (>=1.0.0): Load environment variables from .env file
 - **python-jose[cryptography]** (>=3.3.0): JWT token encoding and decoding with cryptographic support
 - **passlib[bcrypt]** (>=1.7.4): Password hashing utilities (for future password storage enhancements)
+- **fastapi-pagination** (>=0.12.0): Standardized pagination support for FastAPI endpoints
 
 ### WPM Library
 - **wpm** (git+https://github.com/waigore/wpmv2.git@dev): Wealth Portfolio Manager library installed from GitHub dev branch. Key components:
