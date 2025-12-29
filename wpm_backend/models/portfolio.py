@@ -1,6 +1,7 @@
 """Pydantic models for portfolio-related data structures."""
 
 from typing import Optional
+from fastapi_pagination import Page
 from pydantic import BaseModel, Field, computed_field
 
 
@@ -21,6 +22,19 @@ class Position(BaseModel):
     )
     unrealized_gain_loss: Optional[float] = Field(
         None, description="Unrealized gain or loss on the position in USD"
+    )
+
+
+class PortfolioAllResponse(BaseModel):
+    """Response model for /portfolio/all endpoint with paginated positions and portfolio totals."""
+
+    positions: Page[Position] = Field(..., description="Paginated list of positions")
+    total_market_value: Optional[float] = Field(
+        None, description="Total market value across all positions in USD"
+    )
+    total_cost_basis: float = Field(..., ge=0, description="Total cost basis across all positions in USD")
+    total_unrealized_gain_loss: Optional[float] = Field(
+        None, description="Total unrealized gain or loss across all positions in USD"
     )
 
 

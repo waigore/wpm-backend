@@ -48,7 +48,7 @@
     "/portfolio/all": {
       "get": {
         "summary": "Get All Positions Endpoint",
-        "description": "GET endpoint to retrieve all portfolio positions with pagination and sorting support.\n\nRequires JWT authentication.\n\nArgs:\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n    page: Page number (1-indexed, default: 1)\n    size: Number of items per page (default: 20, max: 100)\n    sort_by: Field to sort by (default: \"ticker\")\n    sort_order: Sort order - \"asc\" or \"desc\" (default: \"asc\")\n\nReturns:\n    Page[Position] containing paginated list of positions with metadata\n\nRaises:\n    HTTPException: 400 if sort_by field is invalid\n    HTTPException: 500 if portfolio data is not available",
+        "description": "GET endpoint to retrieve all portfolio positions with pagination and sorting support.\n\nRequires JWT authentication.\n\nArgs:\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n    page: Page number (1-indexed, default: 1)\n    size: Number of items per page (default: 20, max: 100)\n    sort_by: Field to sort by (default: \"ticker\")\n    sort_order: Sort order - \"asc\" or \"desc\" (default: \"asc\")\n\nReturns:\n    PortfolioAllResponse containing paginated list of positions and portfolio totals\n\nRaises:\n    HTTPException: 400 if sort_by field is invalid\n    HTTPException: 500 if portfolio data is not available",
         "operationId": "get_all_positions_endpoint_portfolio_all_get",
         "security": [
           {
@@ -63,9 +63,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
+              "description": "Page number (1-indexed)",
               "default": 1,
               "title": "Page"
-            }
+            },
+            "description": "Page number (1-indexed)"
           },
           {
             "name": "size",
@@ -75,9 +77,11 @@
               "type": "integer",
               "maximum": 100,
               "minimum": 1,
-              "default": 50,
+              "description": "Number of items per page",
+              "default": 20,
               "title": "Size"
-            }
+            },
+            "description": "Number of items per page"
           },
           {
             "name": "sort_by",
@@ -125,7 +129,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_Position_"
+                  "$ref": "#/components/schemas/PortfolioAllResponse"
                 }
               }
             }
@@ -242,6 +246,51 @@
           "pages"
         ],
         "title": "Page[Position]"
+      },
+      "PortfolioAllResponse": {
+        "properties": {
+          "positions": {
+            "$ref": "#/components/schemas/Page_Position_",
+            "description": "Paginated list of positions"
+          },
+          "total_market_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Market Value",
+            "description": "Total market value across all positions in USD"
+          },
+          "total_cost_basis": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Total Cost Basis",
+            "description": "Total cost basis across all positions in USD"
+          },
+          "total_unrealized_gain_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Unrealized Gain Loss",
+            "description": "Total unrealized gain or loss across all positions in USD"
+          }
+        },
+        "type": "object",
+        "required": [
+          "positions",
+          "total_cost_basis"
+        ],
+        "title": "PortfolioAllResponse",
+        "description": "Response model for /portfolio/all endpoint with paginated positions and portfolio totals."
       },
       "Position": {
         "properties": {

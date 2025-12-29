@@ -96,7 +96,7 @@ def test_get_all_positions_partial_prices(mock_composite_portfolio, mock_price_s
 
 
 def test_portfolio_all_endpoint(client_with_portfolio, test_settings):
-    """Test /portfolio/all endpoint with default pagination."""
+    """Test /portfolio/all endpoint with default pagination and portfolio totals."""
     # First, get a token
     login_response = client_with_portfolio.post(
         "/login",
@@ -113,6 +113,12 @@ def test_portfolio_all_endpoint(client_with_portfolio, test_settings):
         assets[1]: 150.00,
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         response = client_with_portfolio.get(
             "/portfolio/all",
@@ -121,17 +127,30 @@ def test_portfolio_all_endpoint(client_with_portfolio, test_settings):
 
     assert response.status_code == 200
     data = response.json()
-    # Check paginated response format
-    assert "items" in data
-    assert "total" in data
-    assert "page" in data
-    assert "size" in data
-    assert "pages" in data
-    assert data["total"] == 2
-    assert data["page"] == 1
-    assert data["size"] == 20
-    assert data["pages"] == 1
-    assert len(data["items"]) == 2
+    
+    # Check PortfolioAllResponse structure
+    assert "positions" in data
+    assert "total_market_value" in data
+    assert "total_cost_basis" in data
+    assert "total_unrealized_gain_loss" in data
+    
+    # Check positions (paginated)
+    positions = data["positions"]
+    assert "items" in positions
+    assert "total" in positions
+    assert "page" in positions
+    assert "size" in positions
+    assert "pages" in positions
+    assert positions["total"] == 2
+    assert positions["page"] == 1
+    assert positions["size"] == 20
+    assert positions["pages"] == 1
+    assert len(positions["items"]) == 2
+    
+    # Check totals
+    assert data["total_cost_basis"] == 20000.0
+    assert data["total_market_value"] == 25050.0
+    assert data["total_unrealized_gain_loss"] == 5050.0
 
 
 def test_portfolio_all_endpoint_no_portfolio(client, test_settings):
@@ -307,6 +326,12 @@ def test_portfolio_pagination_default_page_size(client_with_portfolio, test_sett
         assets[1]: 150.00,
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         response = client_with_portfolio.get(
             "/portfolio/all",
@@ -315,8 +340,9 @@ def test_portfolio_pagination_default_page_size(client_with_portfolio, test_sett
 
     assert response.status_code == 200
     data = response.json()
-    assert data["size"] == 20  # Default page size
-    assert data["page"] == 1  # Default page
+    positions = data["positions"]
+    assert positions["size"] == 20  # Default page size
+    assert positions["page"] == 1  # Default page
 
 
 def test_portfolio_pagination_custom_page_size(client_with_portfolio, test_settings):
@@ -333,6 +359,12 @@ def test_portfolio_pagination_custom_page_size(client_with_portfolio, test_setti
         assets[1]: 150.00,
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         response = client_with_portfolio.get(
             "/portfolio/all?size=1",
@@ -341,11 +373,12 @@ def test_portfolio_pagination_custom_page_size(client_with_portfolio, test_setti
 
     assert response.status_code == 200
     data = response.json()
-    assert data["size"] == 1
-    assert data["page"] == 1
-    assert data["total"] == 2
-    assert data["pages"] == 2
-    assert len(data["items"]) == 1
+    positions = data["positions"]
+    assert positions["size"] == 1
+    assert positions["page"] == 1
+    assert positions["total"] == 2
+    assert positions["pages"] == 2
+    assert len(positions["items"]) == 1
 
 
 def test_portfolio_pagination_page_navigation(client_with_portfolio, test_settings):
@@ -362,6 +395,12 @@ def test_portfolio_pagination_page_navigation(client_with_portfolio, test_settin
         assets[1]: 150.00,
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         # Get first page
         response1 = client_with_portfolio.get(
@@ -370,8 +409,9 @@ def test_portfolio_pagination_page_navigation(client_with_portfolio, test_settin
         )
         assert response1.status_code == 200
         data1 = response1.json()
-        assert data1["page"] == 1
-        assert len(data1["items"]) == 1
+        positions1 = data1["positions"]
+        assert positions1["page"] == 1
+        assert len(positions1["items"]) == 1
 
         # Get second page
         response2 = client_with_portfolio.get(
@@ -380,11 +420,12 @@ def test_portfolio_pagination_page_navigation(client_with_portfolio, test_settin
         )
         assert response2.status_code == 200
         data2 = response2.json()
-        assert data2["page"] == 2
-        assert len(data2["items"]) == 1
+        positions2 = data2["positions"]
+        assert positions2["page"] == 2
+        assert len(positions2["items"]) == 1
 
         # Verify different items on different pages
-        assert data1["items"][0]["ticker"] != data2["items"][0]["ticker"]
+        assert positions1["items"][0]["ticker"] != positions2["items"][0]["ticker"]
 
 
 def test_portfolio_pagination_page_beyond_total(client_with_portfolio, test_settings):
@@ -401,6 +442,12 @@ def test_portfolio_pagination_page_beyond_total(client_with_portfolio, test_sett
         assets[1]: 150.00,
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         response = client_with_portfolio.get(
             "/portfolio/all?size=1&page=10",
@@ -409,8 +456,9 @@ def test_portfolio_pagination_page_beyond_total(client_with_portfolio, test_sett
 
     assert response.status_code == 200
     data = response.json()
-    assert data["page"] == 10
-    assert len(data["items"]) == 0  # Empty page
+    positions = data["positions"]
+    assert positions["page"] == 10
+    assert len(positions["items"]) == 0  # Empty page
 
 
 def test_portfolio_pagination_max_page_size(client_with_portfolio, test_settings):
@@ -453,6 +501,12 @@ def test_portfolio_sorting_by_ticker_asc(client_with_portfolio, test_settings):
         assets[1]: 150.00,
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         response = client_with_portfolio.get(
             "/portfolio/all?sort_by=ticker&sort_order=asc",
@@ -461,7 +515,7 @@ def test_portfolio_sorting_by_ticker_asc(client_with_portfolio, test_settings):
 
     assert response.status_code == 200
     data = response.json()
-    items = data["items"]
+    items = data["positions"]["items"]
     # Should be sorted by ticker ascending (AAPL before GOOGL)
     assert items[0]["ticker"] == "AAPL"
     assert items[1]["ticker"] == "GOOGL"
@@ -481,6 +535,12 @@ def test_portfolio_sorting_by_ticker_desc(client_with_portfolio, test_settings):
         assets[1]: 150.00,
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         response = client_with_portfolio.get(
             "/portfolio/all?sort_by=ticker&sort_order=desc",
@@ -489,7 +549,7 @@ def test_portfolio_sorting_by_ticker_desc(client_with_portfolio, test_settings):
 
     assert response.status_code == 200
     data = response.json()
-    items = data["items"]
+    items = data["positions"]["items"]
     # Should be sorted by ticker descending (GOOGL before AAPL)
     assert items[0]["ticker"] == "GOOGL"
     assert items[1]["ticker"] == "AAPL"
@@ -509,6 +569,12 @@ def test_portfolio_sorting_by_quantity(client_with_portfolio, test_settings):
         assets[1]: 150.00,
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         response = client_with_portfolio.get(
             "/portfolio/all?sort_by=quantity&sort_order=asc",
@@ -517,7 +583,7 @@ def test_portfolio_sorting_by_quantity(client_with_portfolio, test_settings):
 
     assert response.status_code == 200
     data = response.json()
-    items = data["items"]
+    items = data["positions"]["items"]
     # AAPL has 100.0, GOOGL has 50.0, so GOOGL should come first in ascending order
     assert items[0]["quantity"] == 50.0
     assert items[1]["quantity"] == 100.0
@@ -537,6 +603,12 @@ def test_portfolio_sorting_by_cost_basis(client_with_portfolio, test_settings):
         assets[1]: 150.00,
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         response = client_with_portfolio.get(
             "/portfolio/all?sort_by=cost_basis&sort_order=asc",
@@ -545,7 +617,7 @@ def test_portfolio_sorting_by_cost_basis(client_with_portfolio, test_settings):
 
     assert response.status_code == 200
     data = response.json()
-    items = data["items"]
+    items = data["positions"]["items"]
     # GOOGL has 5000.0, AAPL has 15000.0, so GOOGL should come first
     assert items[0]["cost_basis"] == 5000.0
     assert items[1]["cost_basis"] == 15000.0
@@ -565,6 +637,12 @@ def test_portfolio_sorting_default_ticker_asc(client_with_portfolio, test_settin
         assets[1]: 150.00,
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         response = client_with_portfolio.get(
             "/portfolio/all",
@@ -573,7 +651,7 @@ def test_portfolio_sorting_default_ticker_asc(client_with_portfolio, test_settin
 
     assert response.status_code == 200
     data = response.json()
-    items = data["items"]
+    items = data["positions"]["items"]
     # Default should be ticker ascending
     assert items[0]["ticker"] == "AAPL"
     assert items[1]["ticker"] == "GOOGL"
@@ -617,6 +695,12 @@ def test_portfolio_sorting_all_fields(client_with_portfolio, test_settings):
         assets[1]: 150.00,
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
     valid_fields = [
         "ticker",
         "asset_type",
@@ -653,6 +737,12 @@ def test_portfolio_sorting_with_none_values(client_with_portfolio, test_settings
         assets[1]: 150.00,  # GOOGL has price
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 15000.0  # Only GOOGL has price
+    portfolio.get_total_unrealized_pnl = lambda prices: -5000.0
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         # Sort by current_price ascending - None should come first
         response = client_with_portfolio.get(
@@ -662,7 +752,7 @@ def test_portfolio_sorting_with_none_values(client_with_portfolio, test_settings
 
     assert response.status_code == 200
     data = response.json()
-    items = data["items"]
+    items = data["positions"]["items"]
     # None value should come first in ascending order
     assert items[0]["current_price"] is None
     assert items[1]["current_price"] == 150.00
@@ -692,9 +782,143 @@ def test_portfolio_pagination_and_sorting(client_with_portfolio, test_settings):
 
     assert response.status_code == 200
     data = response.json()
-    assert data["page"] == 1
-    assert data["size"] == 1
-    assert len(data["items"]) == 1
+    positions = data["positions"]
+    assert positions["page"] == 1
+    assert positions["size"] == 1
+    assert len(positions["items"]) == 1
     # Should be sorted descending, so GOOGL should be first
-    assert data["items"][0]["ticker"] == "GOOGL"
+    assert positions["items"][0]["ticker"] == "GOOGL"
+
+
+# Portfolio totals tests
+def test_portfolio_all_endpoint_with_totals(client_with_portfolio, test_settings):
+    """Test /portfolio/all endpoint returns portfolio totals."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/all",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Verify response structure
+    assert "positions" in data
+    assert "total_market_value" in data
+    assert "total_cost_basis" in data
+    assert "total_unrealized_gain_loss" in data
+    
+    # Verify totals match mocked values
+    assert data["total_cost_basis"] == 20000.0
+    assert data["total_market_value"] == 25050.0
+    assert data["total_unrealized_gain_loss"] == 5050.0
+
+
+def test_portfolio_all_endpoint_totals_with_none_values(client_with_portfolio, test_settings):
+    """Test /portfolio/all endpoint handles None values in totals."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: None,  # No prices available
+        assets[1]: None,
+    }
+
+    # Mock portfolio totals methods - market value and P&L return None
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: None
+    portfolio.get_total_unrealized_pnl = lambda prices: None
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/all",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Verify cost basis is always available
+    assert data["total_cost_basis"] == 20000.0
+    
+    # Verify optional fields can be None
+    assert data["total_market_value"] is None
+    assert data["total_unrealized_gain_loss"] is None
+
+
+def test_portfolio_totals_pagination_independence(client_with_portfolio, test_settings):
+    """Test that portfolio totals are independent of pagination parameters."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Test with different pagination parameters
+        response1 = client_with_portfolio.get(
+            "/portfolio/all?page=1&size=1",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        response2 = client_with_portfolio.get(
+            "/portfolio/all?page=2&size=1",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        response3 = client_with_portfolio.get(
+            "/portfolio/all?page=1&size=100",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response1.status_code == 200
+    assert response2.status_code == 200
+    assert response3.status_code == 200
+    
+    data1 = response1.json()
+    data2 = response2.json()
+    data3 = response3.json()
+    
+    # Totals should be the same regardless of pagination
+    assert data1["total_cost_basis"] == data2["total_cost_basis"] == data3["total_cost_basis"] == 20000.0
+    assert data1["total_market_value"] == data2["total_market_value"] == data3["total_market_value"] == 25050.0
+    assert data1["total_unrealized_gain_loss"] == data2["total_unrealized_gain_loss"] == data3["total_unrealized_gain_loss"] == 5050.0
+    
+    # But positions should differ
+    assert len(data1["positions"]["items"]) == 1
+    assert len(data2["positions"]["items"]) == 1
+    assert len(data3["positions"]["items"]) == 2
 

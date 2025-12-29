@@ -157,6 +157,8 @@ def test_login_endpoint_missing_fields(client):
 
 def test_protected_endpoint_with_valid_token(client_with_portfolio, test_settings):
     """Test protected endpoint access with valid token."""
+    from unittest.mock import patch
+
     # First, get a token
     login_response = client_with_portfolio.post(
         "/login",
@@ -164,20 +166,40 @@ def test_protected_endpoint_with_valid_token(client_with_portfolio, test_setting
     )
     token = login_response.json()["access_token"]
 
-    # Access protected endpoint
-    response = client_with_portfolio.get(
-        "/portfolio/all",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    # Mock fetch_price_map and portfolio totals methods
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
+    with patch("wpm_backend.api.routes.fetch_price_map", return_value=mock_price_map), \
+         patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Access protected endpoint
+        response = client_with_portfolio.get(
+            "/portfolio/all",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
     assert response.status_code == 200
     data = response.json()
-    # Response now uses paginated format
-    assert "items" in data
-    assert "total" in data
-    assert "page" in data
-    assert "size" in data
-    assert "pages" in data
+    # Response now uses PortfolioAllResponse format
+    assert "positions" in data
+    assert "total_cost_basis" in data
+    assert "total_market_value" in data
+    assert "total_unrealized_gain_loss" in data
+    # Check paginated positions structure
+    positions = data["positions"]
+    assert "items" in positions
+    assert "total" in positions
+    assert "page" in positions
+    assert "size" in positions
+    assert "pages" in positions
 
 
 def test_protected_endpoint_without_token(client_with_portfolio):

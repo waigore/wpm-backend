@@ -8,13 +8,13 @@ from fastapi_pagination import Page, Params, paginate
 from fastapi.security import OAuth2PasswordBearer
 from starlette.requests import Request
 
-from wpm.portfolio import CompositePortfolio
+from wpm.portfolio import CompositePortfolio, fetch_price_map
 from wpm.pricing import PriceService
 
 from wpm_backend.auth.auth import authenticate_user, create_access_token, verify_token
 from wpm_backend.config import Settings, get_settings
 from wpm_backend.models.auth import LoginRequest, LoginResponse
-from wpm_backend.models.portfolio import Position
+from wpm_backend.models.portfolio import Position, PortfolioAllResponse
 from wpm_backend.services.portfolio_service import get_all_positions, VALID_SORT_FIELDS
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ def get_price_service(request: Request) -> PriceService:
     return price_service
 
 
-@router.get("/portfolio/all", response_model=Page[Position])
+@router.get("/portfolio/all", response_model=PortfolioAllResponse)
 def get_all_positions_endpoint(
     username: str = Depends(get_current_user),
     composite_portfolio: CompositePortfolio = Depends(get_composite_portfolio),
@@ -147,7 +147,7 @@ def get_all_positions_endpoint(
     size: int = Query(20, ge=1, le=100, description="Number of items per page"),
     sort_by: Optional[str] = Query("ticker", description="Field to sort by"),
     sort_order: Optional[str] = Query("asc", pattern="^(asc|desc)$", description="Sort order: 'asc' or 'desc'"),
-) -> Page[Position]:
+) -> PortfolioAllResponse:
     """
     GET endpoint to retrieve all portfolio positions with pagination and sorting support.
 
@@ -163,7 +163,7 @@ def get_all_positions_endpoint(
         sort_order: Sort order - "asc" or "desc" (default: "asc")
 
     Returns:
-        Page[Position] containing paginated list of positions with metadata
+        PortfolioAllResponse containing paginated list of positions and portfolio totals
 
     Raises:
         HTTPException: 400 if sort_by field is invalid
@@ -183,6 +183,10 @@ def get_all_positions_endpoint(
         )
 
     try:
+        # Fetch price map for portfolio totals (needed for get_total_market_value and get_total_unrealized_pnl)
+        logger.info("Fetching price map for portfolio totals")
+        price_map = fetch_price_map(composite_portfolio, price_service)
+        
         # Get all positions with sorting applied
         positions = get_all_positions(
             composite_portfolio, price_service, sort_by=sort_by, sort_order=sort_order
@@ -191,12 +195,25 @@ def get_all_positions_endpoint(
         # Apply pagination with explicit page and size
         paginated_result = paginate(positions, params=Params(page=page, size=size))
 
+        # Get portfolio totals from composite portfolio (pass price_map for methods that need it)
+        total_cost_basis = composite_portfolio.get_total_cost_basis()
+        total_market_value = composite_portfolio.get_total_market_value(price_map)
+        total_unrealized_gain_loss = composite_portfolio.get_total_unrealized_pnl(price_map)
+
         logger.info(
             f"Portfolio response sent to user: {username}, "
             f"total={paginated_result.total}, page={paginated_result.page}, "
-            f"size={paginated_result.size}, pages={paginated_result.pages}"
+            f"size={paginated_result.size}, pages={paginated_result.pages}, "
+            f"total_cost_basis={total_cost_basis}, total_market_value={total_market_value}, "
+            f"total_unrealized_gain_loss={total_unrealized_gain_loss}"
         )
-        return paginated_result
+
+        return PortfolioAllResponse(
+            positions=paginated_result,
+            total_market_value=total_market_value,
+            total_cost_basis=total_cost_basis,
+            total_unrealized_gain_loss=total_unrealized_gain_loss,
+        )
     except ValueError as e:
         # Handle invalid sort_by from service layer
         logger.warning(f"Invalid sort parameter: {e}")

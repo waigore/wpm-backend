@@ -111,7 +111,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 
 **Key Functions**:
 - `login(request: LoginRequest, settings: Settings = Depends(get_settings)) -> LoginResponse`: POST endpoint at `/login` that accepts username/password, validates credentials via auth module, and returns JWT access token with 1-hour expiry. Logs request/response at INFO level.
-- `get_all_positions_endpoint(...) -> Page[Position]`: GET endpoint at `/portfolio/all` that requires JWT authentication. Supports pagination and sorting via query parameters: `page` (default: 1), `size` (default: 20, max: 100), `sort_by` (default: "ticker"), and `sort_order` (default: "asc"). Verifies token via auth module, retrieves CompositePortfolio from application state, creates PriceService instance, calls portfolio_service.get_all_positions() with sorting parameters to fetch and transform positions, applies pagination using fastapi-pagination, then returns Page[Position]. Validates sort_by against allowed Position fields and returns 400 Bad Request for invalid fields. Logs request/response at INFO level.
+- `get_all_positions_endpoint(...) -> PortfolioAllResponse`: GET endpoint at `/portfolio/all` that requires JWT authentication. Supports pagination and sorting via query parameters: `page` (default: 1), `size` (default: 20, max: 100), `sort_by` (default: "ticker"), and `sort_order` (default: "asc"). Verifies token via auth module, retrieves CompositePortfolio from application state, creates PriceService instance, calls portfolio_service.get_all_positions() with sorting parameters to fetch and transform positions, applies pagination using fastapi-pagination, retrieves portfolio totals using composite_portfolio.get_total_cost_basis(), get_total_market_value(), and get_total_unrealized_pnl(), then returns PortfolioAllResponse containing paginated positions and portfolio totals. Validates sort_by against allowed Position fields and returns 400 Bad Request for invalid fields. Logs request/response at INFO level.
 - `get_current_user(token: str = Depends(oauth2_scheme), settings: Settings = Depends(get_settings)) -> str`: Dependency function that extracts JWT token from Authorization header using OAuth2PasswordBearer, verifies it via auth module, and returns username. Raises HTTPException with 401 status if token is invalid or expired. Used to protect endpoints requiring authentication.
 
 **Artifacts**: None
@@ -339,10 +339,45 @@ Model representing a single position in the portfolio. This model is based on th
   - Validation: Can be negative (loss) or positive (gain), None if market_value unavailable
   - Example: 2525.0 or None
 
+### PortfolioAllResponse
+**Location**: `wpm_backend/models/portfolio.py`
+
+Response model for the `/portfolio/all` endpoint. Contains paginated positions and portfolio-level totals calculated across all positions in the composite portfolio (not just the current page).
+
+**Fields**:
+- `positions` (Page[Position], required)
+  - Description: Paginated list of positions using fastapi-pagination Page structure
+  - Contains: items, total, page, size, pages (see Page[Position] structure below)
+  - Validation: Valid Page[Position] object
+  - Example: Page[Position] with items=[Position(...), ...], total=100, page=1, size=20, pages=5
+  
+- `total_market_value` (float, optional)
+  - Description: Total market value across all positions in the portfolio in USD
+  - Source: `composite_portfolio.get_total_market_value()` from wpm library
+  - Calculation: Sum of all position market values (handled by wpm library)
+  - Validation: Non-negative float (if provided), None if prices unavailable for all positions
+  - Example: 25050.0 or None
+  
+- `total_cost_basis` (float, required)
+  - Description: Total cost basis across all positions in the portfolio in USD
+  - Source: `composite_portfolio.get_total_cost_basis()` from wpm library
+  - Calculation: Sum of all position cost bases (handled by wpm library)
+  - Validation: Non-negative float, ge=0
+  - Example: 20000.0
+  
+- `total_unrealized_gain_loss` (float, optional)
+  - Description: Total unrealized gain or loss across all positions in the portfolio in USD
+  - Source: `composite_portfolio.get_total_unrealized_pnl()` from wpm library
+  - Calculation: Sum of all position unrealized gains/losses (handled by wpm library)
+  - Validation: Can be negative (loss) or positive (gain), None if prices unavailable for all positions
+  - Example: 5050.0 or None
+
+**Note**: The totals are calculated from ALL positions in the composite portfolio, regardless of pagination parameters. This ensures the totals represent the entire portfolio, not just the positions on the current page.
+
 ### Page[Position]
 **Location**: `fastapi_pagination.Page`
 
-Paginated response model for the `/portfolio/all` endpoint. Uses fastapi-pagination library for standardized pagination.
+Paginated response structure used within PortfolioAllResponse. Uses fastapi-pagination library for standardized pagination.
 
 **Fields**:
 - `items` (List[Position], required)

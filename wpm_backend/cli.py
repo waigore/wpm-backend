@@ -69,7 +69,7 @@ class InteractiveCLI:
             print(f"Error: Failed to connect to API: {e}")
 
     def portfolio_all_command(self) -> None:
-        """Call /portfolio/all endpoint and display results in JSON format."""
+        """Call /portfolio/all endpoint and display results with portfolio totals."""
         if not self.token:
             print("Error: Not logged in. Please run 'login' first.")
             return
@@ -83,8 +83,39 @@ class InteractiveCLI:
 
             if response.status_code == 200:
                 data = response.json()
-                # Pretty print JSON response
-                print(json.dumps(data, indent=2))
+                
+                # Display portfolio totals prominently
+                print("\n" + "=" * 60)
+                print("PORTFOLIO TOTALS")
+                print("=" * 60)
+                
+                # Format total_cost_basis (always available)
+                total_cost_basis = data.get("total_cost_basis", 0.0)
+                print(f"Total Cost Basis:    ${total_cost_basis:,.2f}")
+                
+                # Format total_market_value (may be None)
+                total_market_value = data.get("total_market_value")
+                if total_market_value is not None:
+                    print(f"Total Market Value:  ${total_market_value:,.2f}")
+                else:
+                    print("Total Market Value:  N/A (prices unavailable)")
+                
+                # Format total_unrealized_gain_loss (may be None)
+                total_unrealized_gain_loss = data.get("total_unrealized_gain_loss")
+                if total_unrealized_gain_loss is not None:
+                    sign = "+" if total_unrealized_gain_loss >= 0 else ""
+                    print(f"Total Unrealized P&L: {sign}${total_unrealized_gain_loss:,.2f}")
+                else:
+                    print("Total Unrealized P&L: N/A (prices unavailable)")
+                
+                print("=" * 60)
+                print()
+                
+                # Display paginated positions
+                positions_data = data.get("positions", {})
+                print("POSITIONS (Paginated)")
+                print("-" * 60)
+                print(json.dumps(positions_data, indent=2))
             elif response.status_code == 401:
                 print("Error: Authentication failed. Token may be expired. Please run 'login' again.")
                 self.token = None  # Clear invalid token
