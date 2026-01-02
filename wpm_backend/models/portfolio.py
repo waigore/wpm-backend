@@ -38,6 +38,34 @@ class PortfolioAllResponse(BaseModel):
     )
 
 
+class Trade(BaseModel):
+    """Model representing a single trade."""
+
+    date: str = Field(..., description="Trade date (ISO format YYYY-MM-DD)")
+    ticker: str = Field(..., description="Asset ticker symbol")
+    asset_type: str = Field(..., description="Type of asset (e.g., 'Stock', 'Crypto', 'Bond')")
+    action: str = Field(..., description="Trade action from CSV 'Action' column: 'Buy' or 'Sell'")
+    order_instruction: str = Field(..., description="Trade instruction: 'buy' or 'sell'")
+    quantity: float = Field(..., description="Number of shares/units")
+    price: float = Field(..., ge=0, description="Price per share/unit")
+    cost_basis: Optional[float] = Field(
+        None, ge=0, description="Cost basis for buy trades only (quantity * price)"
+    )
+    market_price: Optional[float] = Field(
+        None, ge=0, description="Current market price for buy trades only"
+    )
+    unrealized_profit_loss: Optional[float] = Field(
+        None,
+        description="Unrealized profit or loss for buy trades only (calculated as (market_price - price) * quantity)",
+    )
+
+
+class PortfolioAssetTradesResponse(BaseModel):
+    """Response model for /portfolio/asset/<ticker> endpoint with paginated trades."""
+
+    trades: Page[Trade] = Field(..., description="Paginated list of trades")
+
+
 class PortfolioResponse(BaseModel):
     """Response model for portfolio endpoints."""
 

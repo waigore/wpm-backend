@@ -146,6 +146,153 @@
           }
         }
       }
+    },
+    "/portfolio/asset/{ticker}": {
+      "get": {
+        "summary": "Get Asset Trades Endpoint",
+        "description": "GET endpoint to retrieve all trades for a specific asset ticker with pagination, date filtering, and sorting support.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n    page: Page number (1-indexed, default: 1)\n    size: Number of items per page (default: 20, max: 100)\n    start_date: Optional start date for filtering trades (ISO format YYYY-MM-DD, inclusive)\n    end_date: Optional end date for filtering trades (ISO format YYYY-MM-DD, inclusive)\n    sort_by: Field to sort by (default: \"date\")\n    sort_order: Sort order - \"asc\" or \"desc\" (default: \"asc\")\n\nReturns:\n    PortfolioAssetTradesResponse containing paginated list of trades\n\nRaises:\n    HTTPException: 400 if date format is invalid, start_date > end_date, or sort_by field is invalid\n    HTTPException: 404 if ticker is not found\n    HTTPException: 500 if portfolio data is not available",
+        "operationId": "get_asset_trades_endpoint_portfolio_asset__ticker__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticker"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number (1-indexed)",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number (1-indexed)"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Number of items per page",
+              "default": 20,
+              "title": "Size"
+            },
+            "description": "Number of items per page"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start date for filtering (ISO format YYYY-MM-DD)",
+              "title": "Start Date"
+            },
+            "description": "Start date for filtering (ISO format YYYY-MM-DD)"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End date for filtering (ISO format YYYY-MM-DD)",
+              "title": "End Date"
+            },
+            "description": "End date for filtering (ISO format YYYY-MM-DD)"
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Field to sort by",
+              "default": "date",
+              "title": "Sort By"
+            },
+            "description": "Field to sort by"
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(asc|desc)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort order: 'asc' or 'desc'",
+              "default": "asc",
+              "title": "Sort Order"
+            },
+            "description": "Sort order: 'asc' or 'desc'"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioAssetTradesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -247,6 +394,46 @@
         ],
         "title": "Page[Position]"
       },
+      "Page_Trade_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Trade"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[Trade]"
+      },
       "PortfolioAllResponse": {
         "properties": {
           "positions": {
@@ -291,6 +478,20 @@
         ],
         "title": "PortfolioAllResponse",
         "description": "Response model for /portfolio/all endpoint with paginated positions and portfolio totals."
+      },
+      "PortfolioAssetTradesResponse": {
+        "properties": {
+          "trades": {
+            "$ref": "#/components/schemas/Page_Trade_",
+            "description": "Paginated list of trades"
+          }
+        },
+        "type": "object",
+        "required": [
+          "trades"
+        ],
+        "title": "PortfolioAssetTradesResponse",
+        "description": "Response model for /portfolio/asset/<ticker> endpoint with paginated trades."
       },
       "Position": {
         "properties": {
@@ -376,6 +577,96 @@
         ],
         "title": "Position",
         "description": "Model representing a single portfolio position."
+      },
+      "Trade": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "description": "Trade date (ISO format YYYY-MM-DD)"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker",
+            "description": "Asset ticker symbol"
+          },
+          "asset_type": {
+            "type": "string",
+            "title": "Asset Type",
+            "description": "Type of asset (e.g., 'Stock', 'Crypto', 'Bond')"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action",
+            "description": "Trade action from CSV 'Action' column: 'Buy' or 'Sell'"
+          },
+          "order_instruction": {
+            "type": "string",
+            "title": "Order Instruction",
+            "description": "Trade instruction: 'buy' or 'sell'"
+          },
+          "quantity": {
+            "type": "number",
+            "title": "Quantity",
+            "description": "Number of shares/units"
+          },
+          "price": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Price",
+            "description": "Price per share/unit"
+          },
+          "cost_basis": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Basis",
+            "description": "Cost basis for buy trades only (quantity * price)"
+          },
+          "market_price": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Price",
+            "description": "Current market price for buy trades only"
+          },
+          "unrealized_profit_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Profit Loss",
+            "description": "Unrealized profit or loss for buy trades only (calculated as (market_price - price) * quantity)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "ticker",
+          "asset_type",
+          "action",
+          "order_instruction",
+          "quantity",
+          "price"
+        ],
+        "title": "Trade",
+        "description": "Model representing a single trade."
       },
       "ValidationError": {
         "properties": {

@@ -1,6 +1,7 @@
 """API route definitions (login, portfolio endpoints)."""
 
 import logging
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -14,8 +15,8 @@ from wpm.pricing import PriceService
 from wpm_backend.auth.auth import authenticate_user, create_access_token, verify_token
 from wpm_backend.config import Settings, get_settings
 from wpm_backend.models.auth import LoginRequest, LoginResponse
-from wpm_backend.models.portfolio import Position, PortfolioAllResponse
-from wpm_backend.services.portfolio_service import get_all_positions, VALID_SORT_FIELDS
+from wpm_backend.models.portfolio import Position, PortfolioAllResponse, PortfolioAssetTradesResponse
+from wpm_backend.services.portfolio_service import get_all_positions, get_asset_trades, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -220,5 +221,133 @@ def get_all_positions_endpoint(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
+        )
+
+
+@router.get("/portfolio/asset/{ticker}", response_model=PortfolioAssetTradesResponse)
+def get_asset_trades_endpoint(
+    ticker: str,
+    username: str = Depends(get_current_user),
+    composite_portfolio: CompositePortfolio = Depends(get_composite_portfolio),
+    price_service: PriceService = Depends(get_price_service),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    start_date: Optional[str] = Query(None, description="Start date for filtering (ISO format YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date for filtering (ISO format YYYY-MM-DD)"),
+    sort_by: Optional[str] = Query("date", description="Field to sort by"),
+    sort_order: Optional[str] = Query("asc", pattern="^(asc|desc)$", description="Sort order: 'asc' or 'desc'"),
+) -> PortfolioAssetTradesResponse:
+    """
+    GET endpoint to retrieve all trades for a specific asset ticker with pagination, date filtering, and sorting support.
+
+    Requires JWT authentication.
+
+    Args:
+        ticker: Asset ticker symbol
+        username: Authenticated username (from token)
+        composite_portfolio: Composite portfolio instance (injected via dependency)
+        price_service: Price service instance (injected via dependency)
+        page: Page number (1-indexed, default: 1)
+        size: Number of items per page (default: 20, max: 100)
+        start_date: Optional start date for filtering trades (ISO format YYYY-MM-DD, inclusive)
+        end_date: Optional end date for filtering trades (ISO format YYYY-MM-DD, inclusive)
+        sort_by: Field to sort by (default: "date")
+        sort_order: Sort order - "asc" or "desc" (default: "asc")
+
+    Returns:
+        PortfolioAssetTradesResponse containing paginated list of trades
+
+    Raises:
+        HTTPException: 400 if date format is invalid, start_date > end_date, or sort_by field is invalid
+        HTTPException: 404 if ticker is not found
+        HTTPException: 500 if portfolio data is not available
+    """
+    logger.info(
+        f"Asset trades request received from user: {username}, ticker={ticker}, "
+        f"page={page}, size={size}, start_date={start_date}, end_date={end_date}, "
+        f"sort_by={sort_by}, sort_order={sort_order}"
+    )
+
+    # Parse and validate date parameters
+    start_date_obj = None
+    end_date_obj = None
+
+    if start_date is not None:
+        try:
+            start_date_obj = date.fromisoformat(start_date)
+        except ValueError as e:
+            logger.warning(f"Invalid start_date format: {start_date}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid start_date format: {start_date}. Expected ISO format (YYYY-MM-DD)",
+            )
+
+    if end_date is not None:
+        try:
+            end_date_obj = date.fromisoformat(end_date)
+        except ValueError as e:
+            logger.warning(f"Invalid end_date format: {end_date}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid end_date format: {end_date}. Expected ISO format (YYYY-MM-DD)",
+            )
+
+    # Validate date range
+    if start_date_obj is not None and end_date_obj is not None:
+        if start_date_obj > end_date_obj:
+            logger.warning(f"Invalid date range: start_date={start_date_obj} > end_date={end_date_obj}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"start_date ({start_date_obj}) must be less than or equal to end_date ({end_date_obj})",
+            )
+
+    # Validate sort_by parameter
+    if sort_by is not None and sort_by not in VALID_TRADE_SORT_FIELDS:
+        logger.warning(f"Invalid sort_by field requested: {sort_by}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid sort_by field: {sort_by}. Valid fields: {sorted(VALID_TRADE_SORT_FIELDS)}",
+        )
+
+    try:
+        # Get trades with date filtering and sorting
+        trades = get_asset_trades(
+            composite_portfolio,
+            ticker,
+            price_service,
+            start_date=start_date_obj,
+            end_date=end_date_obj,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+
+        # Apply pagination
+        paginated_result = paginate(trades, params=Params(page=page, size=size))
+
+        logger.info(
+            f"Asset trades response sent to user: {username}, ticker={ticker}, "
+            f"total={paginated_result.total}, page={paginated_result.page}, "
+            f"size={paginated_result.size}, pages={paginated_result.pages}"
+        )
+
+        return PortfolioAssetTradesResponse(trades=paginated_result)
+    except ValueError as e:
+        # Handle ticker not found, invalid sort_by, or other value errors
+        logger.warning(f"Error retrieving trades for ticker {ticker}: {e}")
+        # Check if it's a sort_by validation error
+        if "Invalid sort_by field" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving trades for ticker {ticker}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error while retrieving trades for ticker {ticker}",
         )
 

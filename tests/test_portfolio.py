@@ -922,3 +922,936 @@ def test_portfolio_totals_pagination_independence(client_with_portfolio, test_se
     assert len(data2["positions"]["items"]) == 1
     assert len(data3["positions"]["items"]) == 2
 
+
+# Tests for /portfolio/asset/<ticker> endpoint
+def test_get_asset_trades_service(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_trades() service function."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_trades
+    from wpm.models import Asset, Trade as WPMTrade
+
+    # Create mock asset - need to use same object for price map lookup
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 1, 15)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("100.0")
+    trade1.price = 150.0
+
+    trade2 = Mock(spec=WPMTrade)
+    trade2.date = date(2024, 2, 20)
+    trade2.asset = asset
+    trade2.action = "Sell"
+    trade2.order_instruction = "Limit"
+    trade2.quantity = Decimal("50.0")
+    trade2.price = 160.0
+
+    # Mock get_asset_trades method
+    mock_composite_portfolio.get_asset_trades.return_value = [trade1, trade2]
+
+    # Mock fetch_price_map - the service code matches by ticker, so we need an asset with matching ticker
+    # Create a price map asset (can be different object, just needs matching ticker)
+    price_map_asset = Mock(spec=Asset)
+    price_map_asset.ticker = "AAPL"  # Must match the ticker we're querying
+    price_map_asset.asset_type = "Stock"
+    mock_price_map = {price_map_asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        trades = get_asset_trades(mock_composite_portfolio, "AAPL", mock_price_service)
+
+    assert len(trades) == 2
+
+    # Check buy trade (should have augmented fields)
+    # Find buy trade by checking which one has cost_basis (buy trades have cost_basis calculated)
+    buy_trade = next(t for t in trades if t.cost_basis is not None)
+    assert buy_trade.ticker == "AAPL"
+    assert buy_trade.asset_type == "Stock"
+    assert buy_trade.action == "Buy"
+    assert buy_trade.quantity == 100.0
+    assert buy_trade.price == 150.0
+    assert buy_trade.cost_basis == 15000.0  # 100 * 150
+    assert buy_trade.market_price == 175.50
+    assert buy_trade.unrealized_profit_loss == 2550.0  # (175.50 - 150.0) * 100
+
+    # Check sell trade (should not have augmented fields)
+    # Find sell trade by checking which one has cost_basis None (sell trades don't have cost_basis)
+    sell_trade = next(t for t in trades if t.cost_basis is None)
+    assert sell_trade.ticker == "AAPL"
+    assert sell_trade.action == "Sell"
+    assert sell_trade.quantity == 50.0
+    assert sell_trade.price == 160.0
+    assert sell_trade.cost_basis is None
+    assert sell_trade.market_price is None
+    assert sell_trade.unrealized_profit_loss is None
+
+
+def test_get_asset_trades_with_date_filtering(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_trades() with date filtering."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_trades
+    from wpm.models import Asset, Trade as WPMTrade
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 1, 15)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("100.0")
+    trade1.price = 150.0
+
+    trade2 = Mock(spec=WPMTrade)
+    trade2.date = date(2024, 2, 20)
+    trade2.asset = asset
+    trade2.action = "Buy"
+    trade2.order_instruction = "Limit"
+    trade2.quantity = Decimal("50.0")
+    trade2.price = 160.0
+
+    trade3 = Mock(spec=WPMTrade)
+    trade3.date = date(2024, 3, 10)
+    trade3.asset = asset
+    trade3.action = "Sell"
+    trade3.order_instruction = "Limit"
+    trade3.quantity = Decimal("25.0")
+    trade3.price = 170.0
+
+    mock_composite_portfolio.get_asset_trades.return_value = [trade1, trade2, trade3]
+
+    mock_price_map = {asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Filter by date range
+        trades = get_asset_trades(
+            mock_composite_portfolio,
+            "AAPL",
+            mock_price_service,
+            start_date=date(2024, 2, 1),
+            end_date=date(2024, 2, 28),
+        )
+
+    # Should only return trade2 (within date range)
+    assert len(trades) == 1
+    assert trades[0].date == "2024-02-20"
+
+
+def test_get_asset_trades_without_prices(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_trades() when market price is not available."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_trades
+    from wpm.models import Asset, Trade as WPMTrade
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 1, 15)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("100.0")
+    trade1.price = 150.0
+
+    mock_composite_portfolio.get_asset_trades.return_value = [trade1]
+
+    # Mock fetch_price_map to return None for the asset
+    mock_price_map = {asset: None}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        trades = get_asset_trades(mock_composite_portfolio, "AAPL", mock_price_service)
+
+    assert len(trades) == 1
+    buy_trade = trades[0]
+    assert buy_trade.action == "Buy"
+    assert buy_trade.cost_basis == 15000.0  # Still calculated
+    assert buy_trade.market_price is None  # No price available
+    assert buy_trade.unrealized_profit_loss is None  # Can't calculate without market price
+
+
+def test_get_asset_trades_invalid_ticker(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_trades() raises ValueError for invalid ticker."""
+    from wpm_backend.services.portfolio_service import get_asset_trades
+
+    # Mock get_asset_trades to raise an exception
+    mock_composite_portfolio.get_asset_trades.side_effect = ValueError("Ticker not found")
+
+    with pytest.raises(ValueError, match="Failed to retrieve trades"):
+        get_asset_trades(mock_composite_portfolio, "INVALID", mock_price_service)
+
+
+def test_get_asset_trades_sorting_service(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_trades() service function with sorting."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_trades
+    from wpm.models import Asset, Trade as WPMTrade
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 2, 20)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("100.0")
+    trade1.price = 150.0
+
+    trade2 = Mock(spec=WPMTrade)
+    trade2.date = date(2024, 1, 15)
+    trade2.asset = asset
+    trade2.action = "Sell"
+    trade2.order_instruction = "Limit"
+    trade2.quantity = Decimal("50.0")
+    trade2.price = 160.0
+
+    trade3 = Mock(spec=WPMTrade)
+    trade3.date = date(2024, 3, 10)
+    trade3.asset = asset
+    trade3.action = "Buy"
+    trade3.order_instruction = "Limit"
+    trade3.quantity = Decimal("25.0")
+    trade3.price = 170.0
+
+    # Mock get_asset_trades method - return in non-chronological order
+    mock_composite_portfolio.get_asset_trades.return_value = [trade1, trade2, trade3]
+
+    price_map_asset = Mock(spec=Asset)
+    price_map_asset.ticker = "AAPL"
+    price_map_asset.asset_type = "Stock"
+    mock_price_map = {price_map_asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Test sorting by date ascending (default)
+        trades_asc = get_asset_trades(
+            mock_composite_portfolio, "AAPL", mock_price_service, sort_by="date", sort_order="asc"
+        )
+
+    assert len(trades_asc) == 3
+    # Should be sorted ascending by date
+    assert trades_asc[0].date == "2024-01-15"
+    assert trades_asc[1].date == "2024-02-20"
+    assert trades_asc[2].date == "2024-03-10"
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Test sorting by date descending
+        trades_desc = get_asset_trades(
+            mock_composite_portfolio, "AAPL", mock_price_service, sort_by="date", sort_order="desc"
+        )
+
+    assert len(trades_desc) == 3
+    # Should be sorted descending by date
+    assert trades_desc[0].date == "2024-03-10"
+    assert trades_desc[1].date == "2024-02-20"
+    assert trades_desc[2].date == "2024-01-15"
+
+
+def test_get_asset_trades_sorting_invalid_field(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_trades() raises ValueError for invalid sort_by field."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_trades
+    from wpm.models import Asset, Trade as WPMTrade
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 1, 15)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("100.0")
+    trade1.price = 150.0
+
+    mock_composite_portfolio.get_asset_trades.return_value = [trade1]
+
+    price_map_asset = Mock(spec=Asset)
+    price_map_asset.ticker = "AAPL"
+    price_map_asset.asset_type = "Stock"
+    mock_price_map = {price_map_asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        with pytest.raises(ValueError, match="Invalid sort_by field"):
+            get_asset_trades(
+                mock_composite_portfolio, "AAPL", mock_price_service, sort_by="invalid_field"
+            )
+
+
+def test_portfolio_asset_trades_endpoint(client_with_portfolio, test_settings):
+    """Test /portfolio/asset/<ticker> endpoint with default pagination."""
+    from datetime import date
+    from wpm.models import Asset, Trade as WPMTrade
+
+    # First, get a token
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    # Create mock trades
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 1, 15)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("100.0")
+    trade1.price = 150.0
+
+    trade2 = Mock(spec=WPMTrade)
+    trade2.date = date(2024, 2, 20)
+    trade2.asset = asset
+    trade2.action = "Sell"
+    trade2.order_instruction = "Limit"
+    trade2.quantity = Decimal("50.0")
+    trade2.price = 160.0
+
+    # Mock get_asset_trades
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_trades.return_value = [trade1, trade2]
+
+    # Mock fetch_price_map
+    mock_price_map = {asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/asset/AAPL",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Check response structure
+    assert "trades" in data
+    trades = data["trades"]
+    assert "items" in trades
+    assert "total" in trades
+    assert "page" in trades
+    assert "size" in trades
+    assert "pages" in trades
+
+    assert trades["total"] == 2
+    assert trades["page"] == 1
+    assert trades["size"] == 20
+    assert len(trades["items"]) == 2
+
+    # Check buy trade has augmented fields
+    # Find buy trade by checking which one has cost_basis (buy trades have cost_basis calculated)
+    buy_trade = next(t for t in trades["items"] if t["cost_basis"] is not None)
+    assert buy_trade["action"] == "Buy"
+    assert buy_trade["cost_basis"] == 15000.0
+    assert buy_trade["market_price"] == 175.50
+    assert buy_trade["unrealized_profit_loss"] == 2550.0
+
+    # Check sell trade does not have augmented fields
+    # Find sell trade by checking which one has cost_basis None (sell trades don't have cost_basis)
+    sell_trade = next(t for t in trades["items"] if t["cost_basis"] is None)
+    assert sell_trade["action"] == "Sell"
+    assert sell_trade["cost_basis"] is None
+    assert sell_trade["market_price"] is None
+    assert sell_trade["unrealized_profit_loss"] is None
+
+
+def test_portfolio_asset_trades_endpoint_with_date_filtering(client_with_portfolio, test_settings):
+    """Test /portfolio/asset/<ticker> endpoint with date filtering."""
+    from datetime import date
+    from wpm.models import Asset, Trade as WPMTrade
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 1, 15)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("100.0")
+    trade1.price = 150.0
+
+    trade2 = Mock(spec=WPMTrade)
+    trade2.date = date(2024, 2, 20)
+    trade2.asset = asset
+    trade2.action = "Buy"
+    trade2.order_instruction = "Limit"
+    trade2.quantity = Decimal("50.0")
+    trade2.price = 160.0
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_trades.return_value = [trade1, trade2]
+
+    mock_price_map = {asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/asset/AAPL?start_date=2024-02-01&end_date=2024-02-28",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    trades = data["trades"]
+    # Should only return trade2 (within date range)
+    assert trades["total"] == 1
+    assert trades["items"][0]["date"] == "2024-02-20"
+
+
+def test_portfolio_asset_trades_endpoint_invalid_date_format(client_with_portfolio, test_settings):
+    """Test /portfolio/asset/<ticker> endpoint with invalid date format."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    response = client_with_portfolio.get(
+        "/portfolio/asset/AAPL?start_date=invalid-date",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400
+    assert "Invalid start_date format" in response.json()["detail"]
+
+
+def test_portfolio_asset_trades_endpoint_invalid_date_range(client_with_portfolio, test_settings):
+    """Test /portfolio/asset/<ticker> endpoint with invalid date range."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    response = client_with_portfolio.get(
+        "/portfolio/asset/AAPL?start_date=2024-02-28&end_date=2024-02-01",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400
+    assert "start_date" in response.json()["detail"]
+    assert "end_date" in response.json()["detail"]
+
+
+def test_portfolio_asset_trades_endpoint_pagination(client_with_portfolio, test_settings):
+    """Test /portfolio/asset/<ticker> endpoint with pagination."""
+    from datetime import date
+    from wpm.models import Asset, Trade as WPMTrade
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    # Create multiple trades
+    trades = []
+    for i in range(5):
+        trade = Mock(spec=WPMTrade)
+        trade.date = date(2024, 1, i + 1)
+        trade.asset = asset
+        trade.action = "Buy"
+        trade.order_instruction = "buy"
+        trade.quantity = Decimal("10.0")
+        trade.price = 150.0 + i
+        trades.append(trade)
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_trades.return_value = trades
+
+    mock_price_map = {asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/asset/AAPL?page=1&size=2",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    trades_data = data["trades"]
+    assert trades_data["total"] == 5
+    assert trades_data["page"] == 1
+    assert trades_data["size"] == 2
+    assert trades_data["pages"] == 3
+    assert len(trades_data["items"]) == 2
+    # Verify action field is present
+    assert "action" in trades_data["items"][0]
+    assert trades_data["items"][0]["action"] == "Buy"
+
+
+def test_portfolio_asset_trades_endpoint_invalid_ticker(client_with_portfolio, test_settings):
+    """Test /portfolio/asset/<ticker> endpoint with invalid ticker."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    # Mock get_asset_trades to raise ValueError
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_trades.side_effect = ValueError("Ticker INVALID not found")
+
+    response = client_with_portfolio.get(
+        "/portfolio/asset/INVALID",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 404
+    assert "detail" in response.json()
+
+
+def test_portfolio_asset_trades_sorting_by_date_asc(client_with_portfolio, test_settings):
+    """Test sorting by date in ascending order."""
+    from datetime import date
+    from wpm.models import Asset, Trade as WPMTrade
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 2, 20)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("100.0")
+    trade1.price = 150.0
+
+    trade2 = Mock(spec=WPMTrade)
+    trade2.date = date(2024, 1, 15)
+    trade2.asset = asset
+    trade2.action = "Sell"
+    trade2.order_instruction = "Limit"
+    trade2.quantity = Decimal("50.0")
+    trade2.price = 160.0
+
+    trade3 = Mock(spec=WPMTrade)
+    trade3.date = date(2024, 3, 10)
+    trade3.asset = asset
+    trade3.action = "Buy"
+    trade3.order_instruction = "Limit"
+    trade3.quantity = Decimal("25.0")
+    trade3.price = 170.0
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_trades.return_value = [trade1, trade2, trade3]
+
+    mock_price_map = {asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/asset/AAPL?sort_by=date&sort_order=asc",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    trades = data["trades"]
+    assert trades["total"] == 3
+    # Should be sorted by date ascending (oldest first)
+    assert trades["items"][0]["date"] == "2024-01-15"
+    assert trades["items"][1]["date"] == "2024-02-20"
+    assert trades["items"][2]["date"] == "2024-03-10"
+
+
+def test_portfolio_asset_trades_sorting_by_date_desc(client_with_portfolio, test_settings):
+    """Test sorting by date in descending order."""
+    from datetime import date
+    from wpm.models import Asset, Trade as WPMTrade
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 1, 15)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("100.0")
+    trade1.price = 150.0
+
+    trade2 = Mock(spec=WPMTrade)
+    trade2.date = date(2024, 2, 20)
+    trade2.asset = asset
+    trade2.action = "Sell"
+    trade2.order_instruction = "Limit"
+    trade2.quantity = Decimal("50.0")
+    trade2.price = 160.0
+
+    trade3 = Mock(spec=WPMTrade)
+    trade3.date = date(2024, 3, 10)
+    trade3.asset = asset
+    trade3.action = "Buy"
+    trade3.order_instruction = "Limit"
+    trade3.quantity = Decimal("25.0")
+    trade3.price = 170.0
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_trades.return_value = [trade1, trade2, trade3]
+
+    mock_price_map = {asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/asset/AAPL?sort_by=date&sort_order=desc",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    trades = data["trades"]
+    assert trades["total"] == 3
+    # Should be sorted by date descending (newest first)
+    assert trades["items"][0]["date"] == "2024-03-10"
+    assert trades["items"][1]["date"] == "2024-02-20"
+    assert trades["items"][2]["date"] == "2024-01-15"
+
+
+def test_portfolio_asset_trades_sorting_default_date_asc(client_with_portfolio, test_settings):
+    """Test default sorting (date ascending)."""
+    from datetime import date
+    from wpm.models import Asset, Trade as WPMTrade
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 2, 20)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("100.0")
+    trade1.price = 150.0
+
+    trade2 = Mock(spec=WPMTrade)
+    trade2.date = date(2024, 1, 15)
+    trade2.asset = asset
+    trade2.action = "Sell"
+    trade2.order_instruction = "Limit"
+    trade2.quantity = Decimal("50.0")
+    trade2.price = 160.0
+
+    trade3 = Mock(spec=WPMTrade)
+    trade3.date = date(2024, 3, 10)
+    trade3.asset = asset
+    trade3.action = "Buy"
+    trade3.order_instruction = "Limit"
+    trade3.quantity = Decimal("25.0")
+    trade3.price = 170.0
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_trades.return_value = [trade1, trade2, trade3]
+
+    mock_price_map = {asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # No sort parameters - should default to date ascending
+        response = client_with_portfolio.get(
+            "/portfolio/asset/AAPL",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    trades = data["trades"]
+    assert trades["total"] == 3
+    # Should be sorted by date ascending by default
+    assert trades["items"][0]["date"] == "2024-01-15"
+    assert trades["items"][1]["date"] == "2024-02-20"
+    assert trades["items"][2]["date"] == "2024-03-10"
+
+
+def test_portfolio_asset_trades_sorting_invalid_field(client_with_portfolio, test_settings):
+    """Test sorting with invalid sort_by field."""
+    from datetime import date
+    from wpm.models import Asset, Trade as WPMTrade
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 1, 15)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("100.0")
+    trade1.price = 150.0
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_trades.return_value = [trade1]
+
+    mock_price_map = {asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/asset/AAPL?sort_by=invalid_field",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 400
+    assert "Invalid sort_by field" in response.json()["detail"]
+
+
+def test_portfolio_asset_trades_sorting_with_date_filtering(client_with_portfolio, test_settings):
+    """Test sorting works with date filtering."""
+    from datetime import date
+    from wpm.models import Asset, Trade as WPMTrade
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 1, 15)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("100.0")
+    trade1.price = 150.0
+
+    trade2 = Mock(spec=WPMTrade)
+    trade2.date = date(2024, 2, 20)
+    trade2.asset = asset
+    trade2.action = "Buy"
+    trade2.order_instruction = "Limit"
+    trade2.quantity = Decimal("50.0")
+    trade2.price = 160.0
+
+    trade3 = Mock(spec=WPMTrade)
+    trade3.date = date(2024, 3, 10)
+    trade3.asset = asset
+    trade3.action = "Sell"
+    trade3.order_instruction = "Limit"
+    trade3.quantity = Decimal("25.0")
+    trade3.price = 170.0
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_trades.return_value = [trade1, trade2, trade3]
+
+    mock_price_map = {asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Filter by date range and sort descending
+        response = client_with_portfolio.get(
+            "/portfolio/asset/AAPL?start_date=2024-02-01&end_date=2024-02-28&sort_by=date&sort_order=desc",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    trades = data["trades"]
+    # Should only return trade2 (within date range), sorted descending
+    assert trades["total"] == 1
+    assert trades["items"][0]["date"] == "2024-02-20"
+
+
+def test_portfolio_asset_trades_sorting_with_pagination(client_with_portfolio, test_settings):
+    """Test sorting works with pagination."""
+    from datetime import date
+    from wpm.models import Asset, Trade as WPMTrade
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    # Create trades in non-chronological order
+    trade1 = Mock(spec=WPMTrade)
+    trade1.date = date(2024, 3, 10)
+    trade1.asset = asset
+    trade1.action = "Buy"
+    trade1.order_instruction = "Limit"
+    trade1.quantity = Decimal("10.0")
+    trade1.price = 170.0
+
+    trade2 = Mock(spec=WPMTrade)
+    trade2.date = date(2024, 1, 15)
+    trade2.asset = asset
+    trade2.action = "Buy"
+    trade2.order_instruction = "Limit"
+    trade2.quantity = Decimal("10.0")
+    trade2.price = 150.0
+
+    trade3 = Mock(spec=WPMTrade)
+    trade3.date = date(2024, 2, 20)
+    trade3.asset = asset
+    trade3.action = "Buy"
+    trade3.order_instruction = "Limit"
+    trade3.quantity = Decimal("10.0")
+    trade3.price = 160.0
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_trades.return_value = [trade1, trade2, trade3]
+
+    mock_price_map = {asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Sort descending, paginate with size=2
+        response = client_with_portfolio.get(
+            "/portfolio/asset/AAPL?sort_by=date&sort_order=desc&page=1&size=2",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    trades = data["trades"]
+    assert trades["total"] == 3
+    assert trades["page"] == 1
+    assert trades["size"] == 2
+    assert trades["pages"] == 2
+    assert len(trades["items"]) == 2
+    # Should be sorted descending, so newest dates first
+    assert trades["items"][0]["date"] == "2024-03-10"
+    assert trades["items"][1]["date"] == "2024-02-20"
+
+
+def test_portfolio_asset_trades_endpoint_authentication_required(client_with_portfolio, test_settings):
+    """Test /portfolio/asset/<ticker> endpoint requires authentication."""
+    response = client_with_portfolio.get("/portfolio/asset/AAPL")
+
+    assert response.status_code == 401
+    assert "detail" in response.json()
+
+
+def test_portfolio_asset_trades_endpoint_no_portfolio(client, test_settings):
+    """Test /portfolio/asset/<ticker> endpoint when portfolio is not available."""
+    login_response = client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    response = client.get(
+        "/portfolio/asset/AAPL",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 500
+    assert "detail" in response.json()
+
+
+def test_portfolio_asset_trades_endpoint_buy_trade_calculations(client_with_portfolio, test_settings):
+    """Test buy trade calculations (cost_basis, market_price, unrealized_profit_loss)."""
+    from datetime import date
+    from wpm.models import Asset, Trade as WPMTrade
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    trade = Mock(spec=WPMTrade)
+    trade.date = date(2024, 1, 15)
+    trade.asset = asset
+    trade.action = "Buy"
+    trade.order_instruction = "buy"
+    trade.quantity = Decimal("100.0")
+    trade.price = 150.0
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_trades.return_value = [trade]
+
+    # Test with market price available
+    mock_price_map = {asset: 175.50}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/asset/AAPL",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    buy_trade = data["trades"]["items"][0]
+
+    # Verify calculations
+    assert buy_trade["action"] == "Buy"
+    assert buy_trade["cost_basis"] == 15000.0  # 100 * 150
+    assert buy_trade["market_price"] == 175.50
+    assert buy_trade["unrealized_profit_loss"] == 2550.0  # (175.50 - 150.0) * 100
+
+    # Test with no market price
+    mock_price_map_none = {asset: None}
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map_none):
+        response = client_with_portfolio.get(
+            "/portfolio/asset/AAPL",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    buy_trade = data["trades"]["items"][0]
+
+    assert buy_trade["action"] == "Buy"
+    assert buy_trade["cost_basis"] == 15000.0  # Still calculated
+    assert buy_trade["market_price"] is None
+    assert buy_trade["unrealized_profit_loss"] is None
+
