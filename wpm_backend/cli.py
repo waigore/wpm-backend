@@ -137,7 +137,7 @@ class InteractiveCLI:
             print(f"Error: Failed to connect to API: {e}")
 
     def trades_command(self, ticker: str) -> None:
-        """Call /portfolio/asset/{ticker} endpoint and display results with paginated trades."""
+        """Call /portfolio/trades/{ticker} endpoint and display results with paginated trades."""
         if not self.token:
             print("Error: Not logged in. Please run 'login' first.")
             return
@@ -145,7 +145,7 @@ class InteractiveCLI:
         # Call portfolio/asset/{ticker} endpoint with authentication
         try:
             response = self.client.get(
-                f"/portfolio/asset/{ticker}",
+                f"/portfolio/trades/{ticker}",
                 headers={"Authorization": f"Bearer {self.token}"},
             )
 

@@ -147,11 +147,11 @@
         }
       }
     },
-    "/portfolio/asset/{ticker}": {
+    "/portfolio/trades/{ticker}": {
       "get": {
         "summary": "Get Asset Trades Endpoint",
-        "description": "GET endpoint to retrieve all trades for a specific asset ticker with pagination, date filtering, and sorting support.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n    page: Page number (1-indexed, default: 1)\n    size: Number of items per page (default: 20, max: 100)\n    start_date: Optional start date for filtering trades (ISO format YYYY-MM-DD, inclusive)\n    end_date: Optional end date for filtering trades (ISO format YYYY-MM-DD, inclusive)\n    sort_by: Field to sort by (default: \"date\")\n    sort_order: Sort order - \"asc\" or \"desc\" (default: \"asc\")\n\nReturns:\n    PortfolioAssetTradesResponse containing paginated list of trades\n\nRaises:\n    HTTPException: 400 if date format is invalid, start_date > end_date, or sort_by field is invalid\n    HTTPException: 404 if ticker is not found\n    HTTPException: 500 if portfolio data is not available",
-        "operationId": "get_asset_trades_endpoint_portfolio_asset__ticker__get",
+        "description": "GET endpoint to retrieve all trades for a specific asset ticker with pagination, date filtering, and sorting support.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    page: Page number (1-indexed, default: 1)\n    size: Number of items per page (default: 20, max: 100)\n    start_date: Optional start date for filtering trades (ISO format YYYY-MM-DD, inclusive)\n    end_date: Optional end date for filtering trades (ISO format YYYY-MM-DD, inclusive)\n    sort_by: Field to sort by (default: \"date\")\n    sort_order: Sort order - \"asc\" or \"desc\" (default: \"asc\")\n\nReturns:\n    PortfolioAssetTradesResponse containing paginated list of trades\n\nRaises:\n    HTTPException: 400 if date format is invalid, start_date > end_date, or sort_by field is invalid\n    HTTPException: 404 if ticker is not found\n    HTTPException: 500 if portfolio data is not available",
+        "operationId": "get_asset_trades_endpoint_portfolio_trades__ticker__get",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -491,7 +491,7 @@
           "trades"
         ],
         "title": "PortfolioAssetTradesResponse",
-        "description": "Response model for /portfolio/asset/<ticker> endpoint with paginated trades."
+        "description": "Response model for /portfolio/trades/<ticker> endpoint with paginated trades."
       },
       "Position": {
         "properties": {
@@ -616,43 +616,10 @@
             "title": "Price",
             "description": "Price per share/unit"
           },
-          "cost_basis": {
-            "anyOf": [
-              {
-                "type": "number",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Basis",
-            "description": "Cost basis for buy trades only (quantity * price)"
-          },
-          "market_price": {
-            "anyOf": [
-              {
-                "type": "number",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Market Price",
-            "description": "Current market price for buy trades only"
-          },
-          "unrealized_profit_loss": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Unrealized Profit Loss",
-            "description": "Unrealized profit or loss for buy trades only (calculated as (market_price - price) * quantity)"
+          "broker": {
+            "type": "string",
+            "title": "Broker",
+            "description": "Broker name from which the trade originated"
           }
         },
         "type": "object",
@@ -663,7 +630,8 @@
           "action",
           "order_instruction",
           "quantity",
-          "price"
+          "price",
+          "broker"
         ],
         "title": "Trade",
         "description": "Model representing a single trade."

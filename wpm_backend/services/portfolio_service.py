@@ -6,7 +6,6 @@ from typing import List, Optional
 
 from wpm.models import Asset, Position as WPMPosition, Trade as WPMTrade
 from wpm.portfolio import CompositePortfolio, fetch_price_map
-from wpm.pricing import PriceService
 
 from wpm_backend.models.portfolio import Position, Trade
 
@@ -147,7 +146,6 @@ def get_all_positions(
 def get_asset_trades(
     composite: CompositePortfolio,
     ticker: str,
-    price_service: PriceService,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     sort_by: Optional[str] = None,
@@ -159,7 +157,6 @@ def get_asset_trades(
     Args:
         composite: CompositePortfolio instance from wpm library
         ticker: Asset ticker symbol to retrieve trades for
-        price_service: PriceService instance for fetching current prices
         start_date: Optional start date for filtering trades (inclusive)
         end_date: Optional end date for filtering trades (inclusive)
         sort_by: Field name to sort by (default: None, which defaults to "date")
@@ -212,20 +209,6 @@ def get_asset_trades(
 
     logger.info(f"Filtered to {len(filtered_trades)} trades after date filtering")
 
-    # Fetch current prices for the asset (needed for buy trades)
-    market_price = None
-    try:
-        logger.info(f"Fetching current price for asset {ticker}")
-        full_price_map = fetch_price_map(composite, price_service)
-        # Find the matching asset in the price map by ticker
-        for price_asset, price_value in full_price_map.items():
-            if price_asset.ticker == ticker:
-                market_price = price_value
-                break
-        logger.info(f"Fetched price for {ticker}: {market_price}")
-    except Exception as e:
-        logger.warning(f"Error fetching price for asset {ticker}: {e}", exc_info=True)
-
     # Transform wpm Trade objects to API Trade models
     api_trades = []
     for wpm_trade in filtered_trades:
@@ -250,12 +233,12 @@ def get_asset_trades(
             order_instruction = getattr(wpm_trade, 'order_instruction', 'buy')
             quantity = float(getattr(wpm_trade, 'quantity', 0))
             price = float(getattr(wpm_trade, 'price', 0))
+            broker = getattr(wpm_trade, 'broker', 'Unknown')
 
             # Determine if this is a buy trade
             # The CSV has separate "Action" (Buy/Sell) and "Order Instruction" (Limit/Market) columns
             # Check for an 'action' field first (from CSV "Action" column), fall back to order_instruction
             action = getattr(wpm_trade, 'action', None)
-            is_buy = False
             if action is not None:
                 # Use action field if available (from CSV "Action" column: "Buy" or "Sell")
                 is_buy = action.lower() == "buy"
@@ -269,23 +252,6 @@ def get_asset_trades(
                 # Derive action from is_buy when action field is not available
                 action = "Buy" if is_buy else "Sell"
 
-            # Initialize optional fields
-            cost_basis = None
-            unrealized_profit_loss = None
-
-            # For buy trades, calculate cost_basis, market_price, and unrealized_profit_loss
-            trade_market_price = None
-            if is_buy:
-                # Calculate cost basis
-                cost_basis = quantity * price
-
-                # Use the fetched market price (already retrieved above, from outer scope)
-                trade_market_price = market_price
-
-                # Calculate unrealized profit/loss if market price is available
-                if trade_market_price is not None:
-                    unrealized_profit_loss = (trade_market_price - price) * quantity
-
             # Create API Trade model
             api_trade = Trade(
                 date=trade_date_str,
@@ -295,9 +261,7 @@ def get_asset_trades(
                 order_instruction=order_instruction,
                 quantity=quantity,
                 price=price,
-                cost_basis=cost_basis,
-                market_price=trade_market_price if is_buy else None,
-                unrealized_profit_loss=unrealized_profit_loss,
+                broker=broker,
             )
             api_trades.append(api_trade)
         except Exception as e:

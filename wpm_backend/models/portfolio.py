@@ -48,20 +48,11 @@ class Trade(BaseModel):
     order_instruction: str = Field(..., description="Trade instruction: 'buy' or 'sell'")
     quantity: float = Field(..., description="Number of shares/units")
     price: float = Field(..., ge=0, description="Price per share/unit")
-    cost_basis: Optional[float] = Field(
-        None, ge=0, description="Cost basis for buy trades only (quantity * price)"
-    )
-    market_price: Optional[float] = Field(
-        None, ge=0, description="Current market price for buy trades only"
-    )
-    unrealized_profit_loss: Optional[float] = Field(
-        None,
-        description="Unrealized profit or loss for buy trades only (calculated as (market_price - price) * quantity)",
-    )
+    broker: str = Field(..., description="Broker name from which the trade originated")
 
 
 class PortfolioAssetTradesResponse(BaseModel):
-    """Response model for /portfolio/asset/<ticker> endpoint with paginated trades."""
+    """Response model for /portfolio/trades/<ticker> endpoint with paginated trades."""
 
     trades: Page[Trade] = Field(..., description="Paginated list of trades")
 

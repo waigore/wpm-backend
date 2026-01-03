@@ -224,12 +224,11 @@ def get_all_positions_endpoint(
         )
 
 
-@router.get("/portfolio/asset/{ticker}", response_model=PortfolioAssetTradesResponse)
+@router.get("/portfolio/trades/{ticker}", response_model=PortfolioAssetTradesResponse)
 def get_asset_trades_endpoint(
     ticker: str,
     username: str = Depends(get_current_user),
     composite_portfolio: CompositePortfolio = Depends(get_composite_portfolio),
-    price_service: PriceService = Depends(get_price_service),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     size: int = Query(20, ge=1, le=100, description="Number of items per page"),
     start_date: Optional[str] = Query(None, description="Start date for filtering (ISO format YYYY-MM-DD)"),
@@ -246,7 +245,6 @@ def get_asset_trades_endpoint(
         ticker: Asset ticker symbol
         username: Authenticated username (from token)
         composite_portfolio: Composite portfolio instance (injected via dependency)
-        price_service: Price service instance (injected via dependency)
         page: Page number (1-indexed, default: 1)
         size: Number of items per page (default: 20, max: 100)
         start_date: Optional start date for filtering trades (ISO format YYYY-MM-DD, inclusive)
@@ -314,7 +312,6 @@ def get_asset_trades_endpoint(
         trades = get_asset_trades(
             composite_portfolio,
             ticker,
-            price_service,
             start_date=start_date_obj,
             end_date=end_date_obj,
             sort_by=sort_by,
