@@ -191,6 +191,61 @@ class InteractiveCLI:
         except Exception as e:
             print(f"Error: Failed to connect to API: {e}")
 
+    def lots_command(self, ticker: str) -> None:
+        """Call /portfolio/lots/{ticker} endpoint and display results with paginated lots."""
+        if not self.token:
+            print("Error: Not logged in. Please run 'login' first.")
+            return
+
+        # Call portfolio/lots/{ticker} endpoint with authentication
+        try:
+            response = self.client.get(
+                f"/portfolio/lots/{ticker}",
+                headers={"Authorization": f"Bearer {self.token}"},
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Display paginated lots
+                lots_data = data.get("lots", {})
+                print("\nLOTS (Paginated)")
+                print("-" * 60)
+                print(json.dumps(lots_data, indent=2))
+            elif response.status_code == 401:
+                print("Error: Authentication failed. Token may be expired. Please run 'login' again.")
+                self.token = None  # Clear invalid token
+            elif response.status_code == 404:
+                print(f"Error: Ticker '{ticker}' not found.")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+            elif response.status_code == 400:
+                print("Error: Invalid request parameters.")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+            elif response.status_code == 500:
+                print("Error: Server error. Lot data may not be available.")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+            else:
+                print(f"Error: Request failed with status code {response.status_code}")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+        except Exception as e:
+            print(f"Error: Failed to connect to API: {e}")
+
     def status_command(self) -> None:
         """Check the status of portfolio data and services."""
         print("\nApplication Status:")
@@ -227,6 +282,7 @@ class InteractiveCLI:
         print("  login           - Login with username/password (required for protected endpoints)")
         print("  portfolio all   - Get all portfolio positions (requires login)")
         print("  trades <ticker> - Get all trades for an asset ticker (requires login)")
+        print("  lots <ticker>   - Get all lots for an asset ticker (requires login)")
         print("  status          - Check application status (portfolio data, services)")
         print("  help            - Show this help message")
         print("  exit, quit      - Exit the CLI")
@@ -263,6 +319,12 @@ class InteractiveCLI:
                         self.trades_command(ticker)
                     else:
                         print("Error: Ticker is required. Usage: trades <ticker>")
+                elif cmd == "lots":
+                    if len(parts) > 1:
+                        ticker = parts[1]
+                        self.lots_command(ticker)
+                    else:
+                        print("Error: Ticker is required. Usage: lots <ticker>")
                 elif cmd == "status":
                     self.status_command()
                 else:

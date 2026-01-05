@@ -293,6 +293,153 @@
           }
         }
       }
+    },
+    "/portfolio/lots/{ticker}": {
+      "get": {
+        "summary": "Get Asset Lots Endpoint",
+        "description": "GET endpoint to retrieve all lots for a specific asset ticker with pagination, date filtering, and sorting support.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    page: Page number (1-indexed, default: 1)\n    size: Number of items per page (default: 20, max: 100)\n    start_date: Optional start date for filtering lots (ISO format YYYY-MM-DD, inclusive)\n    end_date: Optional end date for filtering lots (ISO format YYYY-MM-DD, inclusive)\n    sort_by: Field to sort by (default: \"date\")\n    sort_order: Sort order - \"asc\" or \"desc\" (default: \"asc\")\n\nReturns:\n    PortfolioAssetLotsResponse containing paginated list of lots\n\nRaises:\n    HTTPException: 400 if date format is invalid, start_date > end_date, or sort_by field is invalid\n    HTTPException: 404 if ticker is not found\n    HTTPException: 500 if portfolio data is not available",
+        "operationId": "get_asset_lots_endpoint_portfolio_lots__ticker__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticker"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number (1-indexed)",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number (1-indexed)"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Number of items per page",
+              "default": 20,
+              "title": "Size"
+            },
+            "description": "Number of items per page"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start date for filtering (ISO format YYYY-MM-DD)",
+              "title": "Start Date"
+            },
+            "description": "Start date for filtering (ISO format YYYY-MM-DD)"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End date for filtering (ISO format YYYY-MM-DD)",
+              "title": "End Date"
+            },
+            "description": "End date for filtering (ISO format YYYY-MM-DD)"
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Field to sort by",
+              "default": "date",
+              "title": "Sort By"
+            },
+            "description": "Field to sort by"
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(asc|desc)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort order: 'asc' or 'desc'",
+              "default": "asc",
+              "title": "Sort Order"
+            },
+            "description": "Sort order: 'asc' or 'desc'"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioAssetLotsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -353,6 +500,123 @@
         ],
         "title": "LoginResponse",
         "description": "Response model for login endpoint."
+      },
+      "Lot": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "description": "Lot date (ISO format YYYY-MM-DD)"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker",
+            "description": "Asset ticker symbol"
+          },
+          "asset_type": {
+            "type": "string",
+            "title": "Asset Type",
+            "description": "Type of asset (e.g., 'Stock', 'Crypto', 'Bond')"
+          },
+          "original_quantity": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Original Quantity",
+            "description": "Original quantity in the lot"
+          },
+          "remaining_quantity": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Remaining Quantity",
+            "description": "Remaining quantity in the lot"
+          },
+          "cost_basis": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Cost Basis",
+            "description": "Cost basis of the lot in USD"
+          },
+          "matched_sells": {
+            "items": {
+              "$ref": "#/components/schemas/MatchedSell"
+            },
+            "type": "array",
+            "title": "Matched Sells",
+            "description": "List of matched sells that consumed from this lot"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "ticker",
+          "asset_type",
+          "original_quantity",
+          "remaining_quantity",
+          "cost_basis"
+        ],
+        "title": "Lot",
+        "description": "Model representing a single lot."
+      },
+      "MatchedSell": {
+        "properties": {
+          "trade": {
+            "$ref": "#/components/schemas/Trade",
+            "description": "Sell trade that consumed from the lot"
+          },
+          "consumed_quantity": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Consumed Quantity",
+            "description": "Quantity consumed from the lot by this sell trade"
+          }
+        },
+        "type": "object",
+        "required": [
+          "trade",
+          "consumed_quantity"
+        ],
+        "title": "MatchedSell",
+        "description": "Model representing a matched sell with consumed quantity from a lot."
+      },
+      "Page_Lot_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Lot"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[Lot]"
       },
       "Page_Position_": {
         "properties": {
@@ -478,6 +742,20 @@
         ],
         "title": "PortfolioAllResponse",
         "description": "Response model for /portfolio/all endpoint with paginated positions and portfolio totals."
+      },
+      "PortfolioAssetLotsResponse": {
+        "properties": {
+          "lots": {
+            "$ref": "#/components/schemas/Page_Lot_",
+            "description": "Paginated list of lots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lots"
+        ],
+        "title": "PortfolioAssetLotsResponse",
+        "description": "Response model for /portfolio/lots/<ticker> endpoint with paginated lots."
       },
       "PortfolioAssetTradesResponse": {
         "properties": {

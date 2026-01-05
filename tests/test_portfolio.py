@@ -1792,3 +1792,745 @@ def test_portfolio_asset_trades_endpoint_broker_field(client_with_portfolio, tes
     assert buy_trade["action"] == "Buy"
     assert buy_trade["broker"] == "IBKR"
 
+
+# Tests for /portfolio/lots/<ticker> endpoint
+def test_get_asset_lots_service(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_lots() service function."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset, Trade as WPMTrade
+
+    # Create mock asset
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    # Create mock lot
+    lot = Mock()
+    lot.purchase_date = date(2024, 1, 15)
+    lot.asset = asset
+    lot.original_quantity = Decimal("100.0")
+    lot.remaining_quantity = Decimal("75.0")
+    lot.cost_basis = 15000.0
+
+    # Create mock matched sell
+    matched_sell_trade = Mock(spec=WPMTrade)
+    matched_sell_trade.date = date(2024, 2, 20)
+    matched_sell_trade.asset = asset
+    matched_sell_trade.action = "Sell"
+    matched_sell_trade.order_instruction = "Limit"
+    matched_sell_trade.quantity = Decimal("25.0")
+    matched_sell_trade.price = 160.0
+    matched_sell_trade.broker = "IBKR"
+
+    matched_sell = Mock()
+    matched_sell.trade = matched_sell_trade
+    matched_sell.consumed_quantity = Decimal("25.0")
+
+    lot.matched_sells = [matched_sell]
+
+    # Mock get_asset_lots method
+    mock_composite_portfolio.get_asset_lots.return_value = [lot]
+
+    lots = get_asset_lots(mock_composite_portfolio, "AAPL")
+
+    assert len(lots) == 1
+    api_lot = lots[0]
+    assert api_lot.ticker == "AAPL"
+    assert api_lot.asset_type == "Stock"
+    assert api_lot.date == "2024-01-15"
+    assert api_lot.original_quantity == 100.0
+    assert api_lot.remaining_quantity == 75.0
+    assert api_lot.cost_basis == 15000.0
+    assert len(api_lot.matched_sells) == 1
+    assert api_lot.matched_sells[0].consumed_quantity == 25.0
+    assert api_lot.matched_sells[0].trade.action == "Sell"
+    assert api_lot.matched_sells[0].trade.broker == "IBKR"
+
+
+def test_get_asset_lots_with_date_filtering(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_lots() with date filtering."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot1 = Mock()
+    lot1.purchase_date = date(2024, 1, 15)
+    lot1.asset = asset
+    lot1.original_quantity = Decimal("100.0")
+    lot1.remaining_quantity = Decimal("100.0")
+    lot1.cost_basis = 15000.0
+    lot1.matched_sells = []
+
+    lot2 = Mock()
+    lot2.purchase_date = date(2024, 2, 20)
+    lot2.asset = asset
+    lot2.original_quantity = Decimal("50.0")
+    lot2.remaining_quantity = Decimal("50.0")
+    lot2.cost_basis = 7500.0
+    lot2.matched_sells = []
+
+    lot3 = Mock()
+    lot3.purchase_date = date(2024, 3, 10)
+    lot3.asset = asset
+    lot3.original_quantity = Decimal("25.0")
+    lot3.remaining_quantity = Decimal("25.0")
+    lot3.cost_basis = 3750.0
+    lot3.matched_sells = []
+
+    mock_composite_portfolio.get_asset_lots.return_value = [lot1, lot2, lot3]
+
+    # Filter by date range
+    lots = get_asset_lots(
+        mock_composite_portfolio,
+        "AAPL",
+        start_date=date(2024, 2, 1),
+        end_date=date(2024, 2, 28),
+    )
+
+    # Should only return lot2 (within date range)
+    assert len(lots) == 1
+    assert lots[0].date == "2024-02-20"
+
+
+def test_get_asset_lots_sorting(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_lots() service function with sorting."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot1 = Mock()
+    lot1.purchase_date = date(2024, 2, 20)
+    lot1.asset = asset
+    lot1.original_quantity = Decimal("100.0")
+    lot1.remaining_quantity = Decimal("75.0")
+    lot1.cost_basis = 15000.0
+    lot1.matched_sells = []
+
+    lot2 = Mock()
+    lot2.purchase_date = date(2024, 1, 15)
+    lot2.asset = asset
+    lot2.original_quantity = Decimal("50.0")
+    lot2.remaining_quantity = Decimal("50.0")
+    lot2.cost_basis = 5000.0
+    lot2.matched_sells = []
+
+    lot3 = Mock()
+    lot3.purchase_date = date(2024, 3, 10)
+    lot3.asset = asset
+    lot3.original_quantity = Decimal("25.0")
+    lot3.remaining_quantity = Decimal("25.0")
+    lot3.cost_basis = 2500.0
+    lot3.matched_sells = []
+
+    # Mock get_asset_lots method - return in non-chronological order
+    mock_composite_portfolio.get_asset_lots.return_value = [lot1, lot2, lot3]
+
+    # Test sorting by date ascending (default)
+    lots_asc = get_asset_lots(
+        mock_composite_portfolio, "AAPL", sort_by="date", sort_order="asc"
+    )
+
+    assert len(lots_asc) == 3
+    # Should be sorted ascending by date
+    assert lots_asc[0].date == "2024-01-15"
+    assert lots_asc[1].date == "2024-02-20"
+    assert lots_asc[2].date == "2024-03-10"
+
+    # Test sorting by date descending
+    lots_desc = get_asset_lots(
+        mock_composite_portfolio, "AAPL", sort_by="date", sort_order="desc"
+    )
+
+    assert len(lots_desc) == 3
+    # Should be sorted descending by date
+    assert lots_desc[0].date == "2024-03-10"
+    assert lots_desc[1].date == "2024-02-20"
+    assert lots_desc[2].date == "2024-01-15"
+
+    # Test sorting by original_quantity
+    lots_qty = get_asset_lots(
+        mock_composite_portfolio, "AAPL", sort_by="original_quantity", sort_order="asc"
+    )
+
+    assert len(lots_qty) == 3
+    assert lots_qty[0].original_quantity == 25.0
+    assert lots_qty[1].original_quantity == 50.0
+    assert lots_qty[2].original_quantity == 100.0
+
+    # Test sorting by cost_basis
+    lots_cost = get_asset_lots(
+        mock_composite_portfolio, "AAPL", sort_by="cost_basis", sort_order="desc"
+    )
+
+    assert len(lots_cost) == 3
+    assert lots_cost[0].cost_basis == 15000.0
+    assert lots_cost[1].cost_basis == 5000.0
+    assert lots_cost[2].cost_basis == 2500.0
+
+
+def test_get_asset_lots_sorting_invalid_field(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_lots() raises ValueError for invalid sort_by field."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot = Mock()
+    lot.purchase_date = date(2024, 1, 15)
+    lot.asset = asset
+    lot.original_quantity = Decimal("100.0")
+    lot.remaining_quantity = Decimal("100.0")
+    lot.cost_basis = 15000.0
+    lot.matched_sells = []
+
+    mock_composite_portfolio.get_asset_lots.return_value = [lot]
+
+    with pytest.raises(ValueError, match="Invalid sort_by field"):
+        get_asset_lots(
+            mock_composite_portfolio, "AAPL", sort_by="invalid_field"
+        )
+
+
+def test_get_asset_lots_invalid_ticker(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_lots() raises ValueError for invalid ticker."""
+    from wpm_backend.services.portfolio_service import get_asset_lots
+
+    # Mock get_asset_lots to raise an exception
+    mock_composite_portfolio.get_asset_lots.side_effect = ValueError("Ticker not found")
+
+    with pytest.raises(ValueError, match="Failed to retrieve lots"):
+        get_asset_lots(mock_composite_portfolio, "INVALID")
+
+
+def test_get_asset_lots_matched_sells(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_lots() includes matched sells correctly."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset, Trade as WPMTrade
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    # Create lot with multiple matched sells
+    matched_sell1_trade = Mock(spec=WPMTrade)
+    matched_sell1_trade.date = date(2024, 2, 20)
+    matched_sell1_trade.asset = asset
+    matched_sell1_trade.action = "Sell"
+    matched_sell1_trade.order_instruction = "Limit"
+    matched_sell1_trade.quantity = Decimal("15.0")
+    matched_sell1_trade.price = 160.0
+    matched_sell1_trade.broker = "IBKR"
+
+    matched_sell1 = Mock()
+    matched_sell1.trade = matched_sell1_trade
+    matched_sell1.consumed_quantity = Decimal("15.0")
+
+    matched_sell2_trade = Mock(spec=WPMTrade)
+    matched_sell2_trade.date = date(2024, 3, 10)
+    matched_sell2_trade.asset = asset
+    matched_sell2_trade.action = "Sell"
+    matched_sell2_trade.order_instruction = "Market"
+    matched_sell2_trade.quantity = Decimal("10.0")
+    matched_sell2_trade.price = 170.0
+    matched_sell2_trade.broker = "Futu"
+
+    matched_sell2 = Mock()
+    matched_sell2.trade = matched_sell2_trade
+    matched_sell2.consumed_quantity = Decimal("10.0")
+
+    lot = Mock()
+    lot.purchase_date = date(2024, 1, 15)
+    lot.asset = asset
+    lot.original_quantity = Decimal("100.0")
+    lot.remaining_quantity = Decimal("75.0")
+    lot.cost_basis = 15000.0
+    lot.matched_sells = [matched_sell1, matched_sell2]
+
+    mock_composite_portfolio.get_asset_lots.return_value = [lot]
+
+    lots = get_asset_lots(mock_composite_portfolio, "AAPL")
+
+    assert len(lots) == 1
+    api_lot = lots[0]
+    assert len(api_lot.matched_sells) == 2
+    assert api_lot.matched_sells[0].consumed_quantity == 15.0
+    assert api_lot.matched_sells[0].trade.broker == "IBKR"
+    assert api_lot.matched_sells[1].consumed_quantity == 10.0
+    assert api_lot.matched_sells[1].trade.broker == "Futu"
+
+
+def test_portfolio_asset_lots_endpoint(client_with_portfolio, test_settings):
+    """Test /portfolio/lots/<ticker> endpoint with default pagination."""
+    from datetime import date
+    from wpm.models import Asset, Trade as WPMTrade
+
+    # First, get a token
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    # Create mock lot
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot = Mock()
+    lot.purchase_date = date(2024, 1, 15)
+    lot.asset = asset
+    lot.original_quantity = Decimal("100.0")
+    lot.remaining_quantity = Decimal("75.0")
+    lot.cost_basis = 15000.0
+    lot.matched_sells = []
+
+    # Mock get_asset_lots
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_lots.return_value = [lot]
+
+    response = client_with_portfolio.get(
+        "/portfolio/lots/AAPL",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Check response structure
+    assert "lots" in data
+    lots = data["lots"]
+    assert "items" in lots
+    assert "total" in lots
+    assert "page" in lots
+    assert "size" in lots
+    assert "pages" in lots
+
+    assert lots["total"] == 1
+    assert lots["page"] == 1
+    assert lots["size"] == 20
+    assert len(lots["items"]) == 1
+    assert lots["items"][0]["ticker"] == "AAPL"
+    assert lots["items"][0]["date"] == "2024-01-15"
+
+
+def test_portfolio_asset_lots_endpoint_with_date_filtering(client_with_portfolio, test_settings):
+    """Test /portfolio/lots/<ticker> endpoint with date filtering."""
+    from datetime import date
+    from wpm.models import Asset
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot1 = Mock()
+    lot1.purchase_date = date(2024, 1, 15)
+    lot1.asset = asset
+    lot1.original_quantity = Decimal("100.0")
+    lot1.remaining_quantity = Decimal("100.0")
+    lot1.cost_basis = 15000.0
+    lot1.matched_sells = []
+
+    lot2 = Mock()
+    lot2.purchase_date = date(2024, 2, 20)
+    lot2.asset = asset
+    lot2.original_quantity = Decimal("50.0")
+    lot2.remaining_quantity = Decimal("50.0")
+    lot2.cost_basis = 7500.0
+    lot2.matched_sells = []
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_lots.return_value = [lot1, lot2]
+
+    response = client_with_portfolio.get(
+        "/portfolio/lots/AAPL?start_date=2024-02-01&end_date=2024-02-28",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    lots = data["lots"]
+    # Should only return lot2 (within date range)
+    assert lots["total"] == 1
+    assert lots["items"][0]["date"] == "2024-02-20"
+
+
+def test_portfolio_asset_lots_endpoint_invalid_date_format(client_with_portfolio, test_settings):
+    """Test /portfolio/lots/<ticker> endpoint with invalid date format."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    response = client_with_portfolio.get(
+        "/portfolio/lots/AAPL?start_date=invalid-date",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400
+    assert "Invalid start_date format" in response.json()["detail"]
+
+
+def test_portfolio_asset_lots_endpoint_invalid_date_range(client_with_portfolio, test_settings):
+    """Test /portfolio/lots/<ticker> endpoint with invalid date range."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    response = client_with_portfolio.get(
+        "/portfolio/lots/AAPL?start_date=2024-02-28&end_date=2024-02-01",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400
+    assert "start_date" in response.json()["detail"]
+    assert "end_date" in response.json()["detail"]
+
+
+def test_portfolio_asset_lots_endpoint_pagination(client_with_portfolio, test_settings):
+    """Test /portfolio/lots/<ticker> endpoint with pagination."""
+    from datetime import date
+    from wpm.models import Asset
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    # Create multiple lots
+    lots = []
+    for i in range(5):
+        lot = Mock()
+        lot.purchase_date = date(2024, 1, i + 1)
+        lot.asset = asset
+        lot.original_quantity = Decimal("10.0")
+        lot.remaining_quantity = Decimal("10.0")
+        lot.cost_basis = 1500.0 + i * 100
+        lot.matched_sells = []
+        lots.append(lot)
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_lots.return_value = lots
+
+    response = client_with_portfolio.get(
+        "/portfolio/lots/AAPL?page=1&size=2",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    lots_data = data["lots"]
+    assert lots_data["total"] == 5
+    assert lots_data["page"] == 1
+    assert lots_data["size"] == 2
+    assert lots_data["pages"] == 3
+    assert len(lots_data["items"]) == 2
+
+
+def test_portfolio_asset_lots_endpoint_invalid_ticker(client_with_portfolio, test_settings):
+    """Test /portfolio/lots/<ticker> endpoint with invalid ticker."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    # Mock get_asset_lots to raise ValueError
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_lots.side_effect = ValueError("Ticker INVALID not found")
+
+    response = client_with_portfolio.get(
+        "/portfolio/lots/INVALID",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 404
+    assert "detail" in response.json()
+
+
+def test_portfolio_asset_lots_sorting_by_date_asc(client_with_portfolio, test_settings):
+    """Test sorting by date in ascending order."""
+    from datetime import date
+    from wpm.models import Asset
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot1 = Mock()
+    lot1.purchase_date = date(2024, 2, 20)
+    lot1.asset = asset
+    lot1.original_quantity = Decimal("100.0")
+    lot1.remaining_quantity = Decimal("100.0")
+    lot1.cost_basis = 15000.0
+    lot1.matched_sells = []
+
+    lot2 = Mock()
+    lot2.purchase_date = date(2024, 1, 15)
+    lot2.asset = asset
+    lot2.original_quantity = Decimal("50.0")
+    lot2.remaining_quantity = Decimal("50.0")
+    lot2.cost_basis = 5000.0
+    lot2.matched_sells = []
+
+    lot3 = Mock()
+    lot3.purchase_date = date(2024, 3, 10)
+    lot3.asset = asset
+    lot3.original_quantity = Decimal("25.0")
+    lot3.remaining_quantity = Decimal("25.0")
+    lot3.cost_basis = 2500.0
+    lot3.matched_sells = []
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_lots.return_value = [lot1, lot2, lot3]
+
+    response = client_with_portfolio.get(
+        "/portfolio/lots/AAPL?sort_by=date&sort_order=asc",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    lots = data["lots"]
+    assert lots["total"] == 3
+    # Should be sorted by date ascending (oldest first)
+    assert lots["items"][0]["date"] == "2024-01-15"
+    assert lots["items"][1]["date"] == "2024-02-20"
+    assert lots["items"][2]["date"] == "2024-03-10"
+
+
+def test_portfolio_asset_lots_sorting_by_date_desc(client_with_portfolio, test_settings):
+    """Test sorting by date in descending order."""
+    from datetime import date
+    from wpm.models import Asset
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot1 = Mock()
+    lot1.purchase_date = date(2024, 1, 15)
+    lot1.asset = asset
+    lot1.original_quantity = Decimal("100.0")
+    lot1.remaining_quantity = Decimal("100.0")
+    lot1.cost_basis = 15000.0
+    lot1.matched_sells = []
+
+    lot2 = Mock()
+    lot2.purchase_date = date(2024, 2, 20)
+    lot2.asset = asset
+    lot2.original_quantity = Decimal("50.0")
+    lot2.remaining_quantity = Decimal("50.0")
+    lot2.cost_basis = 5000.0
+    lot2.matched_sells = []
+
+    lot3 = Mock()
+    lot3.purchase_date = date(2024, 3, 10)
+    lot3.asset = asset
+    lot3.original_quantity = Decimal("25.0")
+    lot3.remaining_quantity = Decimal("25.0")
+    lot3.cost_basis = 2500.0
+    lot3.matched_sells = []
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_lots.return_value = [lot1, lot2, lot3]
+
+    response = client_with_portfolio.get(
+        "/portfolio/lots/AAPL?sort_by=date&sort_order=desc",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    lots = data["lots"]
+    assert lots["total"] == 3
+    # Should be sorted by date descending (newest first)
+    assert lots["items"][0]["date"] == "2024-03-10"
+    assert lots["items"][1]["date"] == "2024-02-20"
+    assert lots["items"][2]["date"] == "2024-01-15"
+
+
+def test_portfolio_asset_lots_sorting_by_original_quantity(client_with_portfolio, test_settings):
+    """Test sorting by original_quantity."""
+    from datetime import date
+    from wpm.models import Asset
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot1 = Mock()
+    lot1.purchase_date = date(2024, 1, 15)
+    lot1.asset = asset
+    lot1.original_quantity = Decimal("100.0")
+    lot1.remaining_quantity = Decimal("100.0")
+    lot1.cost_basis = 15000.0
+    lot1.matched_sells = []
+
+    lot2 = Mock()
+    lot2.purchase_date = date(2024, 2, 20)
+    lot2.asset = asset
+    lot2.original_quantity = Decimal("25.0")
+    lot2.remaining_quantity = Decimal("25.0")
+    lot2.cost_basis = 2500.0
+    lot2.matched_sells = []
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_lots.return_value = [lot1, lot2]
+
+    response = client_with_portfolio.get(
+        "/portfolio/lots/AAPL?sort_by=original_quantity&sort_order=asc",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    lots = data["lots"]
+    assert lots["total"] == 2
+    # Should be sorted by original_quantity ascending
+    assert lots["items"][0]["original_quantity"] == 25.0
+    assert lots["items"][1]["original_quantity"] == 100.0
+
+
+def test_portfolio_asset_lots_sorting_invalid_field(client_with_portfolio, test_settings):
+    """Test sorting with invalid sort_by field."""
+    from datetime import date
+    from wpm.models import Asset
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot = Mock()
+    lot.purchase_date = date(2024, 1, 15)
+    lot.asset = asset
+    lot.original_quantity = Decimal("100.0")
+    lot.remaining_quantity = Decimal("100.0")
+    lot.cost_basis = 15000.0
+    lot.matched_sells = []
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_lots.return_value = [lot]
+
+    response = client_with_portfolio.get(
+        "/portfolio/lots/AAPL?sort_by=invalid_field",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400
+    assert "Invalid sort_by field" in response.json()["detail"]
+
+
+def test_portfolio_asset_lots_endpoint_authentication_required(client_with_portfolio, test_settings):
+    """Test /portfolio/lots/<ticker> endpoint requires authentication."""
+    response = client_with_portfolio.get("/portfolio/lots/AAPL")
+
+    assert response.status_code == 401
+    assert "detail" in response.json()
+
+
+def test_portfolio_asset_lots_endpoint_matched_sells(client_with_portfolio, test_settings):
+    """Test matched sells are included in lot response."""
+    from datetime import date
+    from wpm.models import Asset, Trade as WPMTrade
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    matched_sell_trade = Mock(spec=WPMTrade)
+    matched_sell_trade.date = date(2024, 2, 20)
+    matched_sell_trade.asset = asset
+    matched_sell_trade.action = "Sell"
+    matched_sell_trade.order_instruction = "Limit"
+    matched_sell_trade.quantity = Decimal("25.0")
+    matched_sell_trade.price = 160.0
+    matched_sell_trade.broker = "IBKR"
+
+    matched_sell = Mock()
+    matched_sell.trade = matched_sell_trade
+    matched_sell.consumed_quantity = Decimal("25.0")
+
+    lot = Mock()
+    lot.purchase_date = date(2024, 1, 15)
+    lot.asset = asset
+    lot.original_quantity = Decimal("100.0")
+    lot.remaining_quantity = Decimal("75.0")
+    lot.cost_basis = 15000.0
+    lot.matched_sells = [matched_sell]
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_lots.return_value = [lot]
+
+    response = client_with_portfolio.get(
+        "/portfolio/lots/AAPL",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    lot_data = data["lots"]["items"][0]
+
+    # Verify matched sells are present
+    assert "matched_sells" in lot_data
+    assert len(lot_data["matched_sells"]) == 1
+    assert lot_data["matched_sells"][0]["consumed_quantity"] == 25.0
+    assert lot_data["matched_sells"][0]["trade"]["action"] == "Sell"
+    assert lot_data["matched_sells"][0]["trade"]["broker"] == "IBKR"
+

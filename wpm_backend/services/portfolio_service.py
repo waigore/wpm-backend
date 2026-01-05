@@ -1,13 +1,14 @@
 """Business logic for portfolio operations, wraps wpm library calls."""
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import List, Optional
 
 from wpm.models import Asset, Position as WPMPosition, Trade as WPMTrade
 from wpm.portfolio import CompositePortfolio, fetch_price_map
+from wpm.pricing import PriceService
 
-from wpm_backend.models.portfolio import Position, Trade
+from wpm_backend.models.portfolio import Lot, MatchedSell, Position, Trade
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,200 @@ VALID_SORT_FIELDS = {
 VALID_TRADE_SORT_FIELDS = {
     "date",
 }
+
+# Valid sortable fields for Lot model
+VALID_LOT_SORT_FIELDS = {
+    "date",
+    "original_quantity",
+    "remaining_quantity",
+    "cost_basis",
+}
+
+
+def _parse_date_to_date_object(date_value) -> date:
+    """
+    Parse a date value to a date object.
+    
+    Handles date objects, datetime objects, and ISO format strings.
+    This is a helper function to work with external library types that may
+    return dates in various formats.
+    
+    Args:
+        date_value: Date value that may be a date, datetime, or ISO string
+        
+    Returns:
+        date object
+        
+    Raises:
+        ValueError: If date_value cannot be parsed to a date
+    """
+    if isinstance(date_value, date):
+        return date_value
+    if isinstance(date_value, datetime):
+        return date_value.date()
+    if isinstance(date_value, str):
+        return date.fromisoformat(date_value)
+    # Try to convert to string and parse as last resort
+    # This handles cases where external library returns custom date-like objects
+    return date.fromisoformat(str(date_value))
+
+
+def _parse_date_to_iso_string(date_value) -> str:
+    """
+    Parse a date value to an ISO format string (YYYY-MM-DD).
+    
+    Handles date objects, datetime objects, and ISO format strings.
+    This is a helper function to work with external library types that may
+    return dates in various formats.
+    
+    Args:
+        date_value: Date value that may be a date, datetime, or ISO string
+        
+    Returns:
+        ISO format date string (YYYY-MM-DD)
+    """
+    if isinstance(date_value, str):
+        # Validate it's a valid ISO format by parsing it
+        date.fromisoformat(date_value)
+        return date_value
+    if isinstance(date_value, date):
+        return date_value.isoformat()
+    if isinstance(date_value, datetime):
+        return date_value.date().isoformat()
+    # For other types, try to get isoformat method if available
+    # This handles cases where external library returns custom date-like objects
+    # NOTE: hasattr is necessary here because we're working with external library types
+    # that may return custom date-like objects without a known base class or protocol.
+    # This is a legitimate use case as the external library types are not under our control.
+    if hasattr(date_value, 'isoformat'):
+        return date_value.isoformat()
+    if hasattr(date_value, 'date'):
+        return date_value.date().isoformat()
+    # Last resort: convert to string
+    return str(date_value)
+
+
+def _determine_trade_action(wpm_trade, order_instruction: str) -> str:
+    """
+    Determine the trade action (Buy or Sell) from a wpm trade object.
+    
+    The CSV has separate "Action" (Buy/Sell) and "Order Instruction" (Limit/Market) columns.
+    This function checks for an 'action' field first, then falls back to order_instruction.
+    
+    Args:
+        wpm_trade: WPM trade object that may have an 'action' attribute
+        order_instruction: Order instruction string (e.g., "buy", "sell", "Limit", "Market")
+        
+    Returns:
+        Normalized action string: "Buy" or "Sell"
+    """
+    # Check for an 'action' field first (from CSV "Action" column), fall back to order_instruction
+    action = getattr(wpm_trade, 'action', None)
+    if action is not None:
+        # Use action field if available (from CSV "Action" column: "Buy" or "Sell")
+        is_buy = action.lower() == "buy"
+        # Normalize action to "Buy" or "Sell" (capitalized)
+        return "Buy" if is_buy else "Sell"
+    else:
+        # Fall back to order_instruction for backward compatibility
+        # order_instruction can be "buy", "sell", "Limit", "Market", etc.
+        # If it's explicitly "sell", it's a sell; otherwise assume it's a buy
+        is_buy = order_instruction.lower() != "sell"
+        # Derive action from is_buy when action field is not available
+        return "Buy" if is_buy else "Sell"
+
+
+def _extract_ticker_and_asset_type_from_trade(wpm_trade, default_ticker: str) -> tuple[str, str]:
+    """
+    Extract ticker and asset_type from a wpm trade object.
+    
+    Handles cases where the trade has an asset object or direct attributes.
+    This is a helper function to work with external library types that may
+    have different attribute structures.
+    
+    Args:
+        wpm_trade: WPM trade object
+        default_ticker: Default ticker value to use if not found
+        
+    Returns:
+        Tuple of (ticker, asset_type) as strings
+    """
+    ticker_value = getattr(wpm_trade, 'ticker', default_ticker)
+    asset_type_value = getattr(wpm_trade, 'asset_type', 'Stock')
+    
+    # Check if trade has an asset object (preferred source)
+    # Using getattr with None default instead of hasattr to avoid dynamic attribute checks
+    wpm_asset = getattr(wpm_trade, 'asset', None)
+    if wpm_asset is not None:
+        asset_type_value = getattr(wpm_asset, 'asset_type', asset_type_value)
+        ticker_value = getattr(wpm_asset, 'ticker', ticker_value)
+    
+    return ticker_value, asset_type_value
+
+
+def _get_lot_date(wpm_lot) -> Optional[date]:
+    """
+    Extract date from a wpm lot object.
+    
+    Args:
+        wpm_lot: WPM lot object
+        
+    Returns:
+        date object if found, None otherwise
+    """
+    purchase_date = getattr(wpm_lot, 'purchase_date', None)
+    if purchase_date is not None:
+        try:
+            return _parse_date_to_date_object(purchase_date)
+        except Exception:
+            pass
+    
+    return None
+
+
+def _extract_ticker_and_asset_type_from_lot(wpm_lot, default_ticker: str) -> tuple[str, str]:
+    """
+    Extract ticker and asset_type from a wpm lot object.
+    
+    Handles cases where the lot has an asset object or direct attributes.
+    Validates that extracted values are strings (not Mock objects in tests).
+    This is a helper function to work with external library types that may
+    have different attribute structures.
+    
+    Args:
+        wpm_lot: WPM lot object
+        default_ticker: Default ticker value to use if not found
+        
+    Returns:
+        Tuple of (ticker, asset_type) as strings
+    """
+    ticker_value = default_ticker
+    asset_type_value = 'Stock'
+    
+    # Try to get from asset object first
+    wpm_asset = getattr(wpm_lot, 'asset', None)
+    if wpm_asset is not None:
+        # Get values and ensure they're strings (not Mock objects)
+        temp_asset_type = getattr(wpm_asset, 'asset_type', None)
+        temp_ticker = getattr(wpm_asset, 'ticker', None)
+        
+        # Check if values are actual strings, not Mock objects
+        if isinstance(temp_asset_type, str):
+            asset_type_value = temp_asset_type
+        if isinstance(temp_ticker, str):
+            ticker_value = temp_ticker
+    
+    # Fallback to direct attributes on lot
+    if ticker_value == default_ticker:
+        temp_ticker = getattr(wpm_lot, 'ticker', None)
+        if isinstance(temp_ticker, str):
+            ticker_value = temp_ticker
+    if asset_type_value == 'Stock':
+        temp_asset_type = getattr(wpm_lot, 'asset_type', None)
+        if isinstance(temp_asset_type, str):
+            asset_type_value = temp_asset_type
+    
+    return ticker_value, asset_type_value
 
 
 def get_all_positions(
@@ -182,19 +377,8 @@ def get_asset_trades(
     filtered_trades = []
     for wpm_trade in wpm_trades:
         try:
-            # Parse trade date (assuming it's a date object, datetime object, or string in YYYY-MM-DD format)
-            trade_date = wpm_trade.date
-            if isinstance(trade_date, str):
-                trade_date = date.fromisoformat(trade_date)
-            elif isinstance(trade_date, date):
-                # Already a date object, use as-is
-                pass
-            elif hasattr(trade_date, 'date'):
-                # datetime object, extract date
-                trade_date = trade_date.date()
-            else:
-                # Try to convert to string and parse
-                trade_date = date.fromisoformat(str(trade_date))
+            # Parse trade date using helper function
+            trade_date = _parse_date_to_date_object(wpm_trade.date)
 
             # Apply date filtering
             if start_date is not None and trade_date < start_date:
@@ -213,44 +397,19 @@ def get_asset_trades(
     api_trades = []
     for wpm_trade in filtered_trades:
         try:
-            # Extract trade fields
-            trade_date = wpm_trade.date
-            if isinstance(trade_date, str):
-                trade_date_str = trade_date
-            elif hasattr(trade_date, 'isoformat'):
-                trade_date_str = trade_date.isoformat()
-            elif hasattr(trade_date, 'date'):
-                trade_date_str = trade_date.date().isoformat()
-            else:
-                trade_date_str = str(trade_date)
+            # Extract trade date using helper function
+            trade_date_str = _parse_date_to_iso_string(wpm_trade.date)
 
-            ticker_value = getattr(wpm_trade, 'ticker', ticker)
-            asset_type_value = getattr(wpm_trade, 'asset_type', 'Stock')
-            if hasattr(wpm_trade, 'asset'):
-                asset_type_value = wpm_trade.asset.asset_type
-                ticker_value = wpm_trade.asset.ticker
+            # Extract ticker and asset_type using helper function
+            ticker_value, asset_type_value = _extract_ticker_and_asset_type_from_trade(wpm_trade, ticker)
 
             order_instruction = getattr(wpm_trade, 'order_instruction', 'buy')
             quantity = float(getattr(wpm_trade, 'quantity', 0))
             price = float(getattr(wpm_trade, 'price', 0))
             broker = getattr(wpm_trade, 'broker', 'Unknown')
 
-            # Determine if this is a buy trade
-            # The CSV has separate "Action" (Buy/Sell) and "Order Instruction" (Limit/Market) columns
-            # Check for an 'action' field first (from CSV "Action" column), fall back to order_instruction
-            action = getattr(wpm_trade, 'action', None)
-            if action is not None:
-                # Use action field if available (from CSV "Action" column: "Buy" or "Sell")
-                is_buy = action.lower() == "buy"
-                # Normalize action to "Buy" or "Sell" (capitalized)
-                action = "Buy" if is_buy else "Sell"
-            else:
-                # Fall back to order_instruction for backward compatibility
-                # order_instruction can be "buy", "sell", "Limit", "Market", etc.
-                # If it's explicitly "sell", it's a sell; otherwise assume it's a buy
-                is_buy = order_instruction.lower() != "sell"
-                # Derive action from is_buy when action field is not available
-                action = "Buy" if is_buy else "Sell"
+            # Determine trade action using helper function
+            action = _determine_trade_action(wpm_trade, order_instruction)
 
             # Create API Trade model
             api_trade = Trade(
@@ -303,4 +462,207 @@ def get_asset_trades(
     
     logger.info(f"Sorted {len(sorted_trades)} trades by {sort_by} ({sort_order})")
     return sorted_trades
+
+
+def get_asset_lots(
+    composite: CompositePortfolio,
+    ticker: str,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = "asc",
+) -> List[Lot]:
+    """
+    Retrieve all lots for a specific asset ticker and transform to API models.
+
+    Args:
+        composite: CompositePortfolio instance from wpm library
+        ticker: Asset ticker symbol to retrieve lots for
+        start_date: Optional start date for filtering lots (inclusive)
+        end_date: Optional end date for filtering lots (inclusive)
+        sort_by: Field name to sort by (default: None, which defaults to "date")
+        sort_order: Sort order - "asc" or "desc" (default: "asc")
+
+    Returns:
+        Sorted list of Lot API models, filtered by date range if provided
+
+    Raises:
+        ValueError: If ticker is not found or invalid, or if sort_by is not a valid Lot field
+    """
+    logger.info(f"Retrieving lots for ticker: {ticker}, start_date={start_date}, end_date={end_date}, sort_by={sort_by}, sort_order={sort_order}")
+
+    # Get lots from composite portfolio
+    try:
+        wpm_lots = composite.get_asset_lots(ticker)
+        logger.info(f"Retrieved {len(wpm_lots)} lots for ticker {ticker}")
+    except Exception as e:
+        logger.error(f"Error retrieving lots for ticker {ticker}: {e}", exc_info=True)
+        raise ValueError(f"Failed to retrieve lots for ticker {ticker}: {e}")
+
+    # Filter by date range if provided
+    filtered_lots = []
+    for wpm_lot in wpm_lots:
+        try:
+            # Get lot date using helper function
+            lot_date = _get_lot_date(wpm_lot)
+            if lot_date is None:
+                # If no date found, skip date filtering but still include the lot
+                filtered_lots.append(wpm_lot)
+                continue
+
+            # Apply date filtering
+            if start_date is not None and lot_date < start_date:
+                continue
+            if end_date is not None and lot_date > end_date:
+                continue
+
+            filtered_lots.append(wpm_lot)
+        except Exception as e:
+            logger.warning(f"Error processing lot date for ticker {ticker}: {e}", exc_info=True)
+            continue
+
+    logger.info(f"Filtered to {len(filtered_lots)} lots after date filtering")
+
+    # Transform wpm Lot objects to API Lot models
+    api_lots = []
+    for wpm_lot in filtered_lots:
+        try:
+            # Extract lot date using helper function
+            lot_date_obj = _get_lot_date(wpm_lot)
+            if lot_date_obj is None:
+                # If no date found, skip this lot (date is required by Lot model)
+                logger.warning(f"Lot for ticker {ticker} has no date, skipping")
+                continue
+            lot_date_str = lot_date_obj.isoformat()
+
+            # Extract ticker and asset_type using helper function
+            ticker_value, asset_type_value = _extract_ticker_and_asset_type_from_lot(wpm_lot, ticker)
+
+            # Extract lot quantities and cost basis
+            original_quantity = float(getattr(wpm_lot, 'original_quantity', 0))
+            remaining_quantity = float(getattr(wpm_lot, 'remaining_quantity', 0))
+            cost_basis = float(getattr(wpm_lot, 'cost_basis', 0))
+
+            # Transform matched sells
+            matched_sells = []
+            wpm_matched_sells = getattr(wpm_lot, 'matched_sells', [])
+            for wpm_matched_sell in wpm_matched_sells:
+                try:
+                    # Handle matched_sell as tuple: (trade, consumed_quantity) or (consumed_quantity, trade)
+                    if isinstance(wpm_matched_sell, tuple):
+                        # Try both orderings: (trade, consumed_quantity) or (consumed_quantity, trade)
+                        if len(wpm_matched_sell) >= 2:
+                            # Check if first element has a 'date' attribute (it's likely the trade)
+                            if hasattr(wpm_matched_sell[0], 'date') or hasattr(wpm_matched_sell[0], 'quantity'):
+                                wpm_trade = wpm_matched_sell[0]
+                                consumed_quantity = float(wpm_matched_sell[1])
+                            else:
+                                # Reverse order: (consumed_quantity, trade)
+                                consumed_quantity = float(wpm_matched_sell[0])
+                                wpm_trade = wpm_matched_sell[1]
+                        else:
+                            logger.warning(f"Unexpected tuple length for matched_sell: {len(wpm_matched_sell)}")
+                            continue
+                    else:
+                        # Extract consumed quantity
+                        consumed_quantity = float(getattr(wpm_matched_sell, 'consumed_quantity', 0))
+
+                        # Extract trade from matched sell
+                        wpm_trade = getattr(wpm_matched_sell, 'trade', None)
+                        if wpm_trade is None:
+                            # If no trade attribute, the matched_sell might be the trade itself
+                            wpm_trade = wpm_matched_sell
+
+                    # Transform trade to API Trade model using helper function
+                    trade_date_str = _parse_date_to_iso_string(wpm_trade.date)
+
+                    # Extract ticker and asset_type using helper function
+                    trade_ticker, trade_asset_type = _extract_ticker_and_asset_type_from_trade(wpm_trade, ticker_value)
+
+                    order_instruction = getattr(wpm_trade, 'order_instruction', 'sell')
+                    trade_quantity = float(getattr(wpm_trade, 'quantity', 0))
+                    trade_price = float(getattr(wpm_trade, 'price', 0))
+                    broker = getattr(wpm_trade, 'broker', 'Unknown')
+
+                    # Determine action using helper function (should be Sell for matched sells)
+                    action = _determine_trade_action(wpm_trade, order_instruction)
+
+                    # Create API Trade model
+                    api_trade = Trade(
+                        date=trade_date_str,
+                        ticker=trade_ticker,
+                        asset_type=trade_asset_type,
+                        action=action,
+                        order_instruction=order_instruction,
+                        quantity=trade_quantity,
+                        price=trade_price,
+                        broker=broker,
+                    )
+
+                    # Create MatchedSell model
+                    matched_sell = MatchedSell(
+                        trade=api_trade,
+                        consumed_quantity=consumed_quantity,
+                    )
+                    matched_sells.append(matched_sell)
+                except Exception as e:
+                    logger.warning(f"Error processing matched sell for ticker {ticker}: {e}", exc_info=True)
+                    continue
+
+            # Create API Lot model
+            api_lot = Lot(
+                date=lot_date_str,
+                ticker=ticker_value,
+                asset_type=asset_type_value,
+                original_quantity=original_quantity,
+                remaining_quantity=remaining_quantity,
+                cost_basis=cost_basis,
+                matched_sells=matched_sells,
+            )
+            api_lots.append(api_lot)
+        except Exception as e:
+            logger.error(f"Error transforming lot for ticker {ticker}: {e}", exc_info=True)
+            continue
+
+    logger.info(f"Transformed {len(api_lots)} lots to API models")
+
+    # Apply sorting if requested
+    if sort_by is None:
+        sort_by = "date"
+    
+    # Validate sort_by field
+    if sort_by not in VALID_LOT_SORT_FIELDS:
+        raise ValueError(f"Invalid sort_by field: {sort_by}. Valid fields: {sorted(VALID_LOT_SORT_FIELDS)}")
+    
+    # Normalize sort_order
+    if sort_order not in ("asc", "desc"):
+        sort_order = "asc"
+    
+    # Sort the lots
+    reverse = sort_order == "desc"
+    
+    def get_sort_key(lot: Lot):
+        """Get sort key for a lot, handling date string parsing and None values."""
+        value = getattr(lot, sort_by, None)
+        
+        # For date field, parse ISO format string to date object for proper sorting
+        if sort_by == "date" and value is not None:
+            try:
+                return date.fromisoformat(value)
+            except (ValueError, AttributeError):
+                # If parsing fails, use string comparison as fallback
+                return value
+        
+        # Handle None values for numeric fields
+        if value is None:
+            sentinel = float('-inf') if not reverse else float('inf')
+            return (1 if reverse else 0, sentinel)
+        
+        # For non-None values
+        return (0 if reverse else 1, value)
+    
+    sorted_lots = sorted(api_lots, key=get_sort_key, reverse=reverse)
+    
+    logger.info(f"Sorted {len(sorted_lots)} lots by {sort_by} ({sort_order})")
+    return sorted_lots
 

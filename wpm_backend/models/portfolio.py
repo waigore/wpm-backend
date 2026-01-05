@@ -68,3 +68,30 @@ class PortfolioResponse(BaseModel):
         """Total number of positions."""
         return len(self.positions)
 
+
+class MatchedSell(BaseModel):
+    """Model representing a matched sell with consumed quantity from a lot."""
+
+    trade: Trade = Field(..., description="Sell trade that consumed from the lot")
+    consumed_quantity: float = Field(..., ge=0, description="Quantity consumed from the lot by this sell trade")
+
+
+class Lot(BaseModel):
+    """Model representing a single lot."""
+
+    date: str = Field(..., description="Lot date (ISO format YYYY-MM-DD)")
+    ticker: str = Field(..., description="Asset ticker symbol")
+    asset_type: str = Field(..., description="Type of asset (e.g., 'Stock', 'Crypto', 'Bond')")
+    original_quantity: float = Field(..., ge=0, description="Original quantity in the lot")
+    remaining_quantity: float = Field(..., ge=0, description="Remaining quantity in the lot")
+    cost_basis: float = Field(..., ge=0, description="Cost basis of the lot in USD")
+    matched_sells: list[MatchedSell] = Field(
+        default_factory=list, description="List of matched sells that consumed from this lot"
+    )
+
+
+class PortfolioAssetLotsResponse(BaseModel):
+    """Response model for /portfolio/lots/<ticker> endpoint with paginated lots."""
+
+    lots: Page[Lot] = Field(..., description="Paginated list of lots")
+

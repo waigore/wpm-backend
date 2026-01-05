@@ -113,6 +113,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `login(request: LoginRequest, settings: Settings = Depends(get_settings)) -> LoginResponse`: POST endpoint at `/login` that accepts username/password, validates credentials via auth module, and returns JWT access token with 1-hour expiry. Logs request/response at INFO level.
 - `get_all_positions_endpoint(...) -> PortfolioAllResponse`: GET endpoint at `/portfolio/all` that requires JWT authentication. Supports pagination and sorting via query parameters: `page` (default: 1), `size` (default: 20, max: 100), `sort_by` (default: "ticker"), and `sort_order` (default: "asc"). Verifies token via auth module, retrieves CompositePortfolio from application state, creates PriceService instance, calls portfolio_service.get_all_positions() with sorting parameters to fetch and transform positions, applies pagination using fastapi-pagination, retrieves portfolio totals using composite_portfolio.get_total_cost_basis(), get_total_market_value(), and get_total_unrealized_pnl(), then returns PortfolioAllResponse containing paginated positions and portfolio totals. Validates sort_by against allowed Position fields and returns 400 Bad Request for invalid fields. Logs request/response at INFO level.
 - `get_asset_trades_endpoint(ticker: str, ...) -> PortfolioAssetTradesResponse`: GET endpoint at `/portfolio/trades/{ticker}` that requires JWT authentication. Supports pagination, date filtering, and sorting via query parameters: `page` (default: 1), `size` (default: 20, max: 100), `start_date` (optional, ISO format YYYY-MM-DD), `end_date` (optional, ISO format YYYY-MM-DD), `sort_by` (default: "date"), and `sort_order` (default: "asc"). Verifies token via auth module, retrieves CompositePortfolio from application state, calls portfolio_service.get_asset_trades() with ticker, date filtering, and sorting parameters to fetch and transform trades, applies pagination using fastapi-pagination, then returns PortfolioAssetTradesResponse containing paginated trades. Validates date formats and date range (start_date <= end_date), validates sort_by against allowed Trade fields, returns 400 Bad Request for invalid dates or sort_by field, 404 Not Found if ticker doesn't exist. Logs request/response at INFO level.
+- `get_asset_lots_endpoint(ticker: str, ...) -> PortfolioAssetLotsResponse`: GET endpoint at `/portfolio/lots/{ticker}` that requires JWT authentication. Supports pagination, date filtering, and sorting via query parameters: `page` (default: 1), `size` (default: 20, max: 100), `start_date` (optional, ISO format YYYY-MM-DD), `end_date` (optional, ISO format YYYY-MM-DD), `sort_by` (default: "date"), and `sort_order` (default: "asc"). Verifies token via auth module, retrieves CompositePortfolio from application state, calls portfolio_service.get_asset_lots() with ticker, date filtering, and sorting parameters to fetch and transform lots, applies pagination using fastapi-pagination, then returns PortfolioAssetLotsResponse containing paginated lots. Validates date formats and date range (start_date <= end_date), validates sort_by against allowed Lot fields (date, original_quantity, remaining_quantity, cost_basis), returns 400 Bad Request for invalid dates or sort_by field, 404 Not Found if ticker doesn't exist. Logs request/response at INFO level.
 - `get_current_user(token: str = Depends(oauth2_scheme), settings: Settings = Depends(get_settings)) -> str`: Dependency function that extracts JWT token from Authorization header using OAuth2PasswordBearer, verifies it via auth module, and returns username. Raises HTTPException with 401 status if token is invalid or expired. Used to protect endpoints requiring authentication.
 
 **Artifacts**: None
@@ -130,6 +131,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 **Key Functions**:
 - `get_all_positions(composite: CompositePortfolio, price_service: PriceService, sort_by: Optional[str] = None, sort_order: Optional[str] = "asc") -> List[Position]`: Retrieves all positions from the wpm composite portfolio using `composite.get_positions()` which returns `Dict[Asset, Position]`. Fetches current prices using `wpm.portfolio.fetch_price_map(composite, price_service)` which returns `Dict[Asset, Optional[float]]`. Transforms wpm Position objects (containing Asset, Decimal quantity, cost_basis, cost_basis_method) into API Position models. Calculates market_value and unrealized_gain_loss when prices are available. Applies sorting based on `sort_by` and `sort_order` parameters. Validates `sort_by` against Position model fields. Handles None values for optional fields (current_price, market_value, unrealized_gain_loss) by treating None as smallest value. Defaults to ticker ascending if no sort parameters provided. Logs function entry/exit and wpm library calls at INFO level. Returns sorted list of API Position objects.
 - `get_asset_trades(composite: CompositePortfolio, ticker: str, start_date: Optional[date] = None, end_date: Optional[date] = None, sort_by: Optional[str] = None, sort_order: Optional[str] = "asc") -> List[Trade]`: Retrieves all trades for a specific asset ticker from the wpm composite portfolio using `composite.get_asset_trades(ticker)` which returns a list of Trade objects. Filters trades by date range if `start_date` and/or `end_date` are provided (inclusive boundaries). Determines if a trade is a buy by checking the `action` field (from CSV "Action" column: "Buy" or "Sell"), with fallback to `order_instruction` field for backward compatibility. Transforms wpm Trade objects into API Trade models, extracting the broker field from the wpm Trade object. Applies sorting based on `sort_by` and `sort_order` parameters. Validates `sort_by` against Trade model fields. Defaults to date ascending if no sort parameters provided. Logs function entry/exit, date filtering, and sorting at INFO level. Returns sorted list of API Trade objects filtered by date range.
+- `get_asset_lots(composite: CompositePortfolio, ticker: str, start_date: Optional[date] = None, end_date: Optional[date] = None, sort_by: Optional[str] = None, sort_order: Optional[str] = "asc") -> List[Lot]`: Retrieves all lots for a specific asset ticker from the wpm composite portfolio using `composite.get_asset_lots(ticker)` which returns a list of Lot objects. Filters lots by date range if `start_date` and/or `end_date` are provided (inclusive boundaries). Transforms wpm Lot objects into API Lot models, including transforming matched sells (which contain Trade objects and consumed_quantity) into MatchedSell API models. Applies sorting based on `sort_by` and `sort_order` parameters. Validates `sort_by` against Lot model fields (date, original_quantity, remaining_quantity, cost_basis). Defaults to date ascending if no sort parameters provided. Logs function entry/exit, date filtering, and sorting at INFO level. Returns sorted list of API Lot objects filtered by date range.
 
 **Artifacts**: None
 
@@ -164,6 +166,11 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
   - Fields defined in Data Models section below
 - `Trade`: Model representing a single trade for an asset
   - Fields defined in Data Models section below
+- `MatchedSell`: Model representing a matched sell with consumed quantity from a lot
+  - `trade`: Trade (required)
+  - `consumed_quantity`: float (required, ge=0)
+- `Lot`: Model representing a single lot
+  - Fields defined in Data Models section below
 - `PortfolioAllResponse`: Response model for `/portfolio/all` endpoint
   - `positions`: Page[Position] (required)
   - `total_market_value`: Optional[float]
@@ -171,6 +178,8 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
   - `total_unrealized_gain_loss`: Optional[float]
 - `PortfolioAssetTradesResponse`: Response model for `/portfolio/trades/<ticker>` endpoint
   - `trades`: Page[Trade] (required)
+- `PortfolioAssetLotsResponse`: Response model for `/portfolio/lots/<ticker>` endpoint
+  - `lots`: Page[Lot] (required)
 - `PortfolioResponse`: Response model for portfolio endpoints (deprecated)
   - `positions`: List[Position] (required)
   - `total_count`: int (calculated, number of positions)
@@ -224,8 +233,9 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `InteractiveCLI.login_command() -> None`: Prompts user for username and password (using `getpass.getpass()` for secure password input), calls POST `/login` endpoint via TestClient, stores the JWT access token in memory for subsequent authenticated requests. Displays success or error messages.
 - `InteractiveCLI.portfolio_all_command() -> None`: Calls GET `/portfolio/all` endpoint via TestClient with stored JWT token in Authorization header. Displays the response in formatted JSON using `json.dumps()` with `indent=2`. Handles authentication errors by prompting user to login if token is missing or expired.
 - `InteractiveCLI.trades_command(ticker: str) -> None`: Calls GET `/portfolio/trades/{ticker}` endpoint via TestClient with stored JWT token in Authorization header. Displays the response (paginated trades) in formatted JSON using `json.dumps()` with `indent=2`. Handles authentication errors (401), not found errors (404), validation errors (400), and server errors (500) with user-friendly error messages.
+- `InteractiveCLI.lots_command(ticker: str) -> None`: Calls GET `/portfolio/lots/{ticker}` endpoint via TestClient with stored JWT token in Authorization header. Displays the response (paginated lots) in formatted JSON using `json.dumps()` with `indent=2`. Handles authentication errors (401), not found errors (404), validation errors (400), and server errors (500) with user-friendly error messages.
 - `InteractiveCLI.run() -> None`: Main interactive loop that prompts for commands, parses input, routes to appropriate command handlers, and continues until user enters `exit` or `quit`.
-- `InteractiveCLI.show_help() -> None`: Displays list of available commands and their descriptions, including the new `trades <ticker>` command.
+- `InteractiveCLI.show_help() -> None`: Displays list of available commands and their descriptions, including the `trades <ticker>` and `lots <ticker>` commands.
 
 **Key Variables**:
 - `InteractiveCLI.client`: TestClient instance for making API requests
@@ -235,6 +245,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `login`: Prompts for username and password, authenticates via `/login` endpoint, stores token
 - `portfolio all`: Retrieves all portfolio positions via `/portfolio/all` endpoint, displays formatted JSON
 - `trades <ticker>`: Retrieves all trades for the specified asset ticker via `/portfolio/trades/{ticker}` endpoint, displays formatted JSON
+- `lots <ticker>`: Retrieves all lots for the specified asset ticker via `/portfolio/lots/{ticker}` endpoint, displays formatted JSON
 - `help`: Lists available commands and their descriptions
 - `exit`/`quit`: Terminates the interactive session
 
@@ -454,6 +465,118 @@ Response model for the `/portfolio/trades/<ticker>` endpoint. Contains paginated
   - Example: Page[Trade] with items=[Trade(...), ...], total=50, page=1, size=20, pages=3
 
 **Note**: The trades are filtered by the provided date range (if specified) and paginated according to the page and size parameters.
+
+### MatchedSell
+**Location**: `wpm_backend/models/portfolio.py`
+
+Model representing a matched sell with consumed quantity from a lot.
+
+**Fields**:
+- `trade` (Trade, required)
+  - Description: Sell trade that consumed from the lot
+  - Source: `matched_sell.trade` from wpm matched sell object
+  - Validation: Valid Trade object
+  - Example: Trade(date="2024-02-15", ticker="AAPL", action="Sell", ...)
+  
+- `consumed_quantity` (float, required)
+  - Description: Quantity consumed from the lot by this sell trade
+  - Source: `matched_sell.consumed_quantity` from wpm matched sell object
+  - Validation: Non-negative float, ge=0
+  - Example: 25.0
+
+### Lot
+**Location**: `wpm_backend/models/portfolio.py`
+
+Model representing a single lot for an asset. This model is based on the wpm library's Lot class.
+
+**Fields**:
+- `date` (str, required)
+  - Description: Lot date in ISO format (YYYY-MM-DD)
+  - Source: `lot.date` from wpm Lot object
+  - Validation: ISO date string format
+  - Example: "2024-01-15"
+  
+- `ticker` (str, required)
+  - Description: Asset ticker symbol
+  - Source: `lot.asset.ticker` or `lot.ticker` from wpm Lot object
+  - Validation: Non-empty string
+  - Example: "AAPL"
+  
+- `asset_type` (str, required)
+  - Description: Type of asset (e.g., "Stock", "Crypto", "Bond")
+  - Source: `lot.asset.asset_type` or `lot.asset_type` from wpm Lot object
+  - Validation: Non-empty string
+  - Example: "Stock"
+  
+- `original_quantity` (float, required)
+  - Description: Original quantity in the lot
+  - Source: `float(lot.original_quantity)` from wpm Lot object
+  - Validation: Non-negative float, ge=0
+  - Example: 100.0
+  
+- `remaining_quantity` (float, required)
+  - Description: Remaining quantity in the lot
+  - Source: `float(lot.remaining_quantity)` from wpm Lot object
+  - Validation: Non-negative float, ge=0
+  - Example: 75.0
+  
+- `cost_basis` (float, required)
+  - Description: Cost basis of the lot in USD
+  - Source: `float(lot.cost_basis)` from wpm Lot object
+  - Validation: Non-negative float, ge=0
+  - Example: 15000.0
+  
+- `matched_sells` (List[MatchedSell], optional, default=[])
+  - Description: List of matched sells that consumed from this lot
+  - Source: `lot.matched_sells` from wpm Lot object, transformed to MatchedSell API models
+  - Validation: List of valid MatchedSell objects
+  - Example: [MatchedSell(trade=Trade(...), consumed_quantity=25.0), ...]
+
+### PortfolioAssetLotsResponse
+**Location**: `wpm_backend/models/portfolio.py`
+
+Response model for the `/portfolio/lots/<ticker>` endpoint. Contains paginated lots for a specific asset ticker.
+
+**Fields**:
+- `lots` (Page[Lot], required)
+  - Description: Paginated list of lots using fastapi-pagination Page structure
+  - Contains: items, total, page, size, pages (see Page[Lot] structure below)
+  - Validation: Valid Page[Lot] object
+  - Example: Page[Lot] with items=[Lot(...), ...], total=10, page=1, size=20, pages=1
+
+**Note**: The lots are filtered by the provided date range (if specified) and paginated according to the page and size parameters.
+
+### Page[Lot]
+**Location**: `fastapi_pagination.Page`
+
+Paginated response structure used within PortfolioAssetLotsResponse. Uses fastapi-pagination library for standardized pagination.
+
+**Fields**:
+- `items` (List[Lot], required)
+  - Description: List of lots in the current page
+  - Validation: List of valid Lot objects
+  - Example: [Lot(date="2024-01-15", ticker="AAPL", ...), ...]
+  
+- `total` (int, required)
+  - Description: Total number of items across all pages
+  - Validation: Non-negative integer
+  - Example: 10
+  
+- `page` (int, required)
+  - Description: Current page number (1-indexed)
+  - Validation: Positive integer, >= 1
+  - Example: 1
+  
+- `size` (int, required)
+  - Description: Number of items per page
+  - Validation: Positive integer, >= 1, <= 100
+  - Example: 20
+  
+- `pages` (int, required)
+  - Description: Total number of pages
+  - Calculation: `ceil(total / size)`
+  - Validation: Non-negative integer
+  - Example: 1
 
 ### Page[Trade]
 **Location**: `fastapi_pagination.Page`

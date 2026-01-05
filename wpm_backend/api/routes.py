@@ -7,7 +7,6 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi_pagination import Page, Params, paginate
 from fastapi.security import OAuth2PasswordBearer
-from starlette.requests import Request
 
 from wpm.portfolio import CompositePortfolio, fetch_price_map
 from wpm.pricing import PriceService
@@ -15,13 +14,37 @@ from wpm.pricing import PriceService
 from wpm_backend.auth.auth import authenticate_user, create_access_token, verify_token
 from wpm_backend.config import Settings, get_settings
 from wpm_backend.models.auth import LoginRequest, LoginResponse
-from wpm_backend.models.portfolio import Position, PortfolioAllResponse, PortfolioAssetTradesResponse
-from wpm_backend.services.portfolio_service import get_all_positions, get_asset_trades, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
+from wpm_backend.models.portfolio import Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesResponse
+from wpm_backend.services.portfolio_service import get_all_positions, get_asset_lots, get_asset_trades, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
 
 logger = logging.getLogger(__name__)
 
 # OAuth2 scheme for JWT token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
+
+
+def _parse_date_string(date_str: str, param_name: str) -> date:
+    """
+    Parse a date string from query parameters to a date object.
+    
+    Args:
+        date_str: Date string in ISO format (YYYY-MM-DD)
+        param_name: Name of the parameter (for error messages)
+        
+    Returns:
+        date object
+        
+    Raises:
+        HTTPException: 400 if date format is invalid
+    """
+    try:
+        return date.fromisoformat(date_str)
+    except ValueError:
+        logger.warning(f"Invalid {param_name} format: {date_str}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {param_name} format: {date_str}. Expected ISO format (YYYY-MM-DD)",
+        )
 
 # Create router
 router = APIRouter()
@@ -271,24 +294,10 @@ def get_asset_trades_endpoint(
     end_date_obj = None
 
     if start_date is not None:
-        try:
-            start_date_obj = date.fromisoformat(start_date)
-        except ValueError as e:
-            logger.warning(f"Invalid start_date format: {start_date}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid start_date format: {start_date}. Expected ISO format (YYYY-MM-DD)",
-            )
+        start_date_obj = _parse_date_string(start_date, "start_date")
 
     if end_date is not None:
-        try:
-            end_date_obj = date.fromisoformat(end_date)
-        except ValueError as e:
-            logger.warning(f"Invalid end_date format: {end_date}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid end_date format: {end_date}. Expected ISO format (YYYY-MM-DD)",
-            )
+        end_date_obj = _parse_date_string(end_date, "end_date")
 
     # Validate date range
     if start_date_obj is not None and end_date_obj is not None:
@@ -346,5 +355,116 @@ def get_asset_trades_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error while retrieving trades for ticker {ticker}",
+        )
+
+
+@router.get("/portfolio/lots/{ticker}", response_model=PortfolioAssetLotsResponse)
+def get_asset_lots_endpoint(
+    ticker: str,
+    username: str = Depends(get_current_user),
+    composite_portfolio: CompositePortfolio = Depends(get_composite_portfolio),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    start_date: Optional[str] = Query(None, description="Start date for filtering (ISO format YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date for filtering (ISO format YYYY-MM-DD)"),
+    sort_by: Optional[str] = Query("date", description="Field to sort by"),
+    sort_order: Optional[str] = Query("asc", pattern="^(asc|desc)$", description="Sort order: 'asc' or 'desc'"),
+) -> PortfolioAssetLotsResponse:
+    """
+    GET endpoint to retrieve all lots for a specific asset ticker with pagination, date filtering, and sorting support.
+
+    Requires JWT authentication.
+
+    Args:
+        ticker: Asset ticker symbol
+        username: Authenticated username (from token)
+        composite_portfolio: Composite portfolio instance (injected via dependency)
+        page: Page number (1-indexed, default: 1)
+        size: Number of items per page (default: 20, max: 100)
+        start_date: Optional start date for filtering lots (ISO format YYYY-MM-DD, inclusive)
+        end_date: Optional end date for filtering lots (ISO format YYYY-MM-DD, inclusive)
+        sort_by: Field to sort by (default: "date")
+        sort_order: Sort order - "asc" or "desc" (default: "asc")
+
+    Returns:
+        PortfolioAssetLotsResponse containing paginated list of lots
+
+    Raises:
+        HTTPException: 400 if date format is invalid, start_date > end_date, or sort_by field is invalid
+        HTTPException: 404 if ticker is not found
+        HTTPException: 500 if portfolio data is not available
+    """
+    logger.info(
+        f"Asset lots request received from user: {username}, ticker={ticker}, "
+        f"page={page}, size={size}, start_date={start_date}, end_date={end_date}, "
+        f"sort_by={sort_by}, sort_order={sort_order}"
+    )
+
+    # Parse and validate date parameters
+    start_date_obj = None
+    end_date_obj = None
+
+    if start_date is not None:
+        start_date_obj = _parse_date_string(start_date, "start_date")
+
+    if end_date is not None:
+        end_date_obj = _parse_date_string(end_date, "end_date")
+
+    # Validate date range
+    if start_date_obj is not None and end_date_obj is not None:
+        if start_date_obj > end_date_obj:
+            logger.warning(f"Invalid date range: start_date={start_date_obj} > end_date={end_date_obj}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"start_date ({start_date_obj}) must be less than or equal to end_date ({end_date_obj})",
+            )
+
+    # Validate sort_by parameter
+    if sort_by is not None and sort_by not in VALID_LOT_SORT_FIELDS:
+        logger.warning(f"Invalid sort_by field requested: {sort_by}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid sort_by field: {sort_by}. Valid fields: {sorted(VALID_LOT_SORT_FIELDS)}",
+        )
+
+    try:
+        # Get lots with date filtering and sorting
+        lots = get_asset_lots(
+            composite_portfolio,
+            ticker,
+            start_date=start_date_obj,
+            end_date=end_date_obj,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+
+        # Apply pagination
+        paginated_result = paginate(lots, params=Params(page=page, size=size))
+
+        logger.info(
+            f"Asset lots response sent to user: {username}, ticker={ticker}, "
+            f"total={paginated_result.total}, page={paginated_result.page}, "
+            f"size={paginated_result.size}, pages={paginated_result.pages}"
+        )
+
+        return PortfolioAssetLotsResponse(lots=paginated_result)
+    except ValueError as e:
+        # Handle ticker not found, invalid sort_by, or other value errors
+        logger.warning(f"Error retrieving lots for ticker {ticker}: {e}")
+        # Check if it's a sort_by validation error
+        if "Invalid sort_by field" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving lots for ticker {ticker}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error while retrieving lots for ticker {ticker}",
         )
 
