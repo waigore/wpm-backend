@@ -785,3 +785,199 @@ Paginated response structure used within PortfolioAllResponse. Uses fastapi-pagi
 - Username and password are stored in .env file as plain text for now (static authentication).
 - Future enhancements may include password hashing and database-backed user management.
 
+## Development Workflow
+
+This section defines the mandatory workflow for introducing changes, enhancements, or refactorings to the wpm-backend library. All development work must follow this process to ensure consistency, quality, and maintainability. This workflow can be referenced as "Development Workflow" or "See Development Workflow section in spec.md" for future work.
+
+### Overview
+
+The development workflow consists of four distinct phases that must be completed in order:
+
+1. **Spec Definition**: Review and update the specification document
+2. **Review WPM Library Changes** (if applicable): Review wpm library documentation for API compatibility
+3. **Implement & Code Review**: Implement changes and conduct code review
+4. **Test**: Ensure comprehensive test coverage
+
+Each phase has specific requirements and deliverables that must be completed before proceeding to the next phase.
+
+### Phase 1: Spec Definition
+
+**When Required:**
+- **Mandatory** for:
+  - New APIs (new endpoints, new request/response models)
+  - Modifications to existing APIs (endpoint changes, model updates, parameter additions)
+- **Recommended** for:
+  - Major refactorings that affect module structure or interfaces
+  - Significant architectural changes
+
+**Requirements:**
+
+1. **Review Current Spec**: 
+   - Read through relevant sections of `SPEC/spec.md` to understand current conventions and patterns
+   - Review existing module requirements, data models, and API endpoint specifications
+   - Understand the package structure and module organization
+
+2. **Update Specification**:
+   - Add or modify sections following existing spec conventions:
+     - **Module Requirements**: Document new or modified modules in the "Module Requirements" section, following the format used for existing modules (Location, Responsibilities, Key Functions, Key Variables, Artifacts)
+     - **Data Models**: Add or update Pydantic models in the "Data Models" section, documenting all fields with descriptions, validation rules, sources, and examples
+     - **API Endpoints**: Document new or modified endpoints in the relevant module's "Key Functions" section, including HTTP method, path, parameters, response models, and behavior
+   - Maintain consistency with existing documentation style and format
+
+3. **Break Down Implementation**:
+   - Document required data structures (Pydantic models, internal data types)
+   - Identify dependencies (external libraries, internal modules, wpm library components)
+   - Outline the logic flow and business rules
+   - Specify how the feature integrates with the existing package structure
+   - Reference existing patterns and conventions from the spec
+
+4. **Document Integration Points**:
+   - Specify how new code interacts with existing modules
+   - Document any changes to existing interfaces or contracts
+   - Identify affected modules and their update requirements
+
+**Deliverable**: Updated `SPEC/spec.md` with complete documentation of the proposed changes, following existing conventions and format.
+
+### Phase 2: Review WPM Library Changes (if applicable)
+
+**When Required:**
+- When changes involve integration with the wpm library
+- When the wpm library has been updated or upgraded
+- When implementing features that depend on wpm library APIs
+
+**Requirements:**
+
+1. **Review WPM Library Documentation**:
+   - Review the wpm library documentation located at `docs/api.md` (markdown format)
+   - Understand the API contracts, data structures, and behavior of relevant wpm library components
+   - Identify any breaking changes or deprecated APIs
+   - Note version requirements or compatibility constraints
+
+2. **Verify API Compatibility**:
+   - Ensure backend implementation aligns with wpm library API contracts
+   - Verify data type compatibility (e.g., Decimal vs float, date formats)
+   - Check that method signatures and return types match expectations
+   - Understand error handling and exception behavior
+
+3. **Document Dependencies**:
+   - Update the spec to document wpm library dependencies
+   - Note any assumptions about wpm library behavior
+   - Document version requirements or compatibility notes
+   - Update the "External Dependencies" section if new wpm library components are used
+
+4. **Identify Integration Points**:
+   - Map wpm library calls to backend service functions
+   - Document data transformation requirements (wpm types to API models)
+   - Identify any abstraction layers needed
+
+**Deliverable**: Documentation of wpm library dependencies and integration approach, with any necessary spec updates.
+
+### Phase 3: Implement & Code Review
+
+**Requirements:**
+
+1. **Implementation**:
+   - Follow the spec breakdown from Phase 1
+   - Create or update required classes, methods, and modules as specified
+   - Implement data structures, business logic, and API endpoints according to the spec
+   - Follow existing code patterns and conventions
+   - Ensure proper error handling and logging
+
+2. **Code Review (Distinct Pass)**:
+   - Conduct a separate code review pass after implementation is complete
+   - Review must verify adherence to clean coding principles defined in `SPEC/clean_coding_principles.md`
+   - Use the code review checklist below
+
+**Code Review Checklist:**
+
+Verify compliance with clean coding principles:
+
+- [ ] **Abstraction and Delegation**:
+  - [ ] Route handlers delegate to service layer functions (no business logic in routes)
+  - [ ] Service layer abstracts away external library (wpm) implementation details
+  - [ ] Dependencies are injected via FastAPI `Depends()` rather than accessed as globals
+  - [ ] Internal implementation details are not exposed beyond module boundaries
+
+- [ ] **Control Flow**:
+  - [ ] No more than 2 levels of nested conditionals
+  - [ ] Guard clauses are used to flatten control flow (early returns/continues)
+  - [ ] Complex conditional logic is abstracted into well-named helper methods or classes
+
+- [ ] **Imports**:
+  - [ ] All imports are at module level (no inline imports)
+  - [ ] Any inline imports are documented with justification for circular import avoidance
+
+- [ ] **Type Safety**:
+  - [ ] `hasattr()` is avoided unless absolutely necessary (with documented justification)
+  - [ ] Interfaces are defined using abstract base classes, protocols, or explicit type checking
+  - [ ] Pydantic models are used for request/response validation
+
+- [ ] **FastAPI-Specific Patterns**:
+  - [ ] Dependencies use `Depends()` for injection rather than global state
+  - [ ] Route handlers are thin and delegate business logic to service layer
+  - [ ] HTTPException is raised for error cases rather than returning error dicts
+  - [ ] Response models are specified using `response_model` parameter
+
+- [ ] **Code Quality**:
+  - [ ] Functions and classes have clear, descriptive names
+  - [ ] Code is well-documented with docstrings where appropriate
+  - [ ] Logging is implemented at appropriate levels (INFO for external calls, DEBUG for internal details)
+
+**Deliverable**: Implemented code that passes code review and adheres to all clean coding principles.
+
+### Phase 4: Test
+
+**Requirements:**
+
+1. **Test Coverage**:
+   - Ensure all new code is covered by tests
+   - Ensure all modified code has updated tests
+   - Maintain minimum 80% code coverage requirement (as specified in the Testing section)
+   - Write tests for:
+     - New functions and methods
+     - Modified functions and methods
+     - Edge cases and error conditions
+     - Integration points with wpm library
+     - API endpoints (request/response validation, error handling)
+
+2. **Test Structure**:
+   - Follow existing test patterns in the `tests/` directory
+   - Use pytest fixtures from `conftest.py` where applicable
+   - Write both unit tests (isolated function testing) and integration tests (API endpoint testing)
+   - Mock wpm library calls appropriately to avoid dependencies on actual CSV files
+
+3. **Test Execution**:
+   - Run the full test suite: `pytest --cov=wpm_backend --cov-report=html --cov-report=term`
+   - Verify all tests pass (no failures or errors)
+   - Verify code coverage meets or exceeds 80% threshold
+   - Review coverage report to identify any untested code paths
+
+4. **Test Quality**:
+   - Tests should be clear, readable, and maintainable
+   - Test names should clearly describe what is being tested
+   - Tests should be independent and not rely on execution order
+   - Use appropriate assertions and error messages
+
+**Deliverable**: Complete test suite with all tests passing and minimum 80% code coverage achieved.
+
+### Workflow Summary
+
+For quick reference, the workflow phases are:
+
+1. **Spec Definition** → Update `SPEC/spec.md` with complete feature documentation
+2. **Review WPM Library Changes** (if applicable) → Review `docs/api.md` and document dependencies
+3. **Implement & Code Review** → Implement following spec, then review against clean coding principles
+4. **Test** → Write tests, achieve 80%+ coverage, verify all tests pass
+
+**Important Notes:**
+- Spec updates are **mandatory** for API changes (new or modified endpoints)
+- Spec updates are **recommended** for major refactorings
+- Code review is a **distinct phase** - do not skip or combine with implementation
+- Testing must be comprehensive - aim for 100% coverage of new/changed code, with overall project coverage at 80%+
+- All phases must be completed before considering a change ready for merge or deployment
+
+**References:**
+- See `SPEC/clean_coding_principles.md` for detailed coding standards
+- See "Testing" section in this spec for test structure and coverage requirements
+- See "Module Requirements" section for documentation format conventions
+
