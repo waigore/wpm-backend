@@ -848,10 +848,15 @@ Each phase has specific requirements and deliverables that must be completed bef
 **Requirements:**
 
 1. **Review WPM Library Documentation**:
-   - Review the wpm library documentation located at `docs/api.md` (markdown format)
+   - Review the wpm library documentation located at `wpm/docs/api.md` (markdown format, in the installed wheel package at `.venv/lib/python3.14/site-packages/wpm/docs/api.md`)
    - Understand the API contracts, data structures, and behavior of relevant wpm library components
    - Identify any breaking changes or deprecated APIs
    - Note version requirements or compatibility constraints
+   - Note that wpm library models are dataclasses with well-defined attributes:
+     - `Asset`: `ticker`, `asset_type` (frozen dataclass)
+     - `Trade`: `date`, `asset`, `action`, `order_instruction`, `quantity`, `price`, `broker` (dataclass)
+     - `Position`: `asset`, `quantity`, `cost_basis`, `cost_basis_method` (dataclass)
+     - `Lot`: `purchase_date`, `asset`, `original_quantity`, `remaining_quantity`, `cost_basis`, `matched_sells` (dataclass)
 
 2. **Verify API Compatibility**:
    - Ensure backend implementation aligns with wpm library API contracts

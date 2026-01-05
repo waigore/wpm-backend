@@ -110,14 +110,14 @@ def _determine_trade_action(wpm_trade, order_instruction: str) -> str:
     This function checks for an 'action' field first, then falls back to order_instruction.
     
     Args:
-        wpm_trade: WPM trade object that may have an 'action' attribute
+        wpm_trade: WPM trade object with an 'action' attribute
         order_instruction: Order instruction string (e.g., "buy", "sell", "Limit", "Market")
         
     Returns:
         Normalized action string: "Buy" or "Sell"
     """
-    # Check for an 'action' field first (from CSV "Action" column), fall back to order_instruction
-    action = getattr(wpm_trade, 'action', None)
+    # Use action field (from CSV "Action" column: "Buy" or "Sell")
+    action = wpm_trade.action
     if action is not None:
         # Use action field if available (from CSV "Action" column: "Buy" or "Sell")
         is_buy = action.lower() == "buy"
@@ -136,26 +136,17 @@ def _extract_ticker_and_asset_type_from_trade(wpm_trade, default_ticker: str) ->
     """
     Extract ticker and asset_type from a wpm trade object.
     
-    Handles cases where the trade has an asset object or direct attributes.
-    This is a helper function to work with external library types that may
-    have different attribute structures.
-    
     Args:
-        wpm_trade: WPM trade object
-        default_ticker: Default ticker value to use if not found
+        wpm_trade: WPM trade object with an asset attribute
+        default_ticker: Default ticker value to use if not found (unused, kept for compatibility)
         
     Returns:
         Tuple of (ticker, asset_type) as strings
     """
-    ticker_value = getattr(wpm_trade, 'ticker', default_ticker)
-    asset_type_value = getattr(wpm_trade, 'asset_type', 'Stock')
-    
-    # Check if trade has an asset object (preferred source)
-    # Using getattr with None default instead of hasattr to avoid dynamic attribute checks
-    wpm_asset = getattr(wpm_trade, 'asset', None)
-    if wpm_asset is not None:
-        asset_type_value = getattr(wpm_asset, 'asset_type', asset_type_value)
-        ticker_value = getattr(wpm_asset, 'ticker', ticker_value)
+    # Trade objects have an asset attribute (Asset dataclass)
+    wpm_asset = wpm_trade.asset
+    ticker_value = wpm_asset.ticker
+    asset_type_value = wpm_asset.asset_type
     
     return ticker_value, asset_type_value
 
@@ -165,12 +156,12 @@ def _get_lot_date(wpm_lot) -> Optional[date]:
     Extract date from a wpm lot object.
     
     Args:
-        wpm_lot: WPM lot object
+        wpm_lot: WPM lot object with purchase_date attribute
         
     Returns:
         date object if found, None otherwise
     """
-    purchase_date = getattr(wpm_lot, 'purchase_date', None)
+    purchase_date = wpm_lot.purchase_date
     if purchase_date is not None:
         try:
             return _parse_date_to_date_object(purchase_date)
@@ -184,43 +175,17 @@ def _extract_ticker_and_asset_type_from_lot(wpm_lot, default_ticker: str) -> tup
     """
     Extract ticker and asset_type from a wpm lot object.
     
-    Handles cases where the lot has an asset object or direct attributes.
-    Validates that extracted values are strings (not Mock objects in tests).
-    This is a helper function to work with external library types that may
-    have different attribute structures.
-    
     Args:
-        wpm_lot: WPM lot object
-        default_ticker: Default ticker value to use if not found
+        wpm_lot: WPM lot object with an asset attribute
+        default_ticker: Default ticker value to use if not found (unused, kept for compatibility)
         
     Returns:
         Tuple of (ticker, asset_type) as strings
     """
-    ticker_value = default_ticker
-    asset_type_value = 'Stock'
-    
-    # Try to get from asset object first
-    wpm_asset = getattr(wpm_lot, 'asset', None)
-    if wpm_asset is not None:
-        # Get values and ensure they're strings (not Mock objects)
-        temp_asset_type = getattr(wpm_asset, 'asset_type', None)
-        temp_ticker = getattr(wpm_asset, 'ticker', None)
-        
-        # Check if values are actual strings, not Mock objects
-        if isinstance(temp_asset_type, str):
-            asset_type_value = temp_asset_type
-        if isinstance(temp_ticker, str):
-            ticker_value = temp_ticker
-    
-    # Fallback to direct attributes on lot
-    if ticker_value == default_ticker:
-        temp_ticker = getattr(wpm_lot, 'ticker', None)
-        if isinstance(temp_ticker, str):
-            ticker_value = temp_ticker
-    if asset_type_value == 'Stock':
-        temp_asset_type = getattr(wpm_lot, 'asset_type', None)
-        if isinstance(temp_asset_type, str):
-            asset_type_value = temp_asset_type
+    # Lot objects have an asset attribute (Asset dataclass)
+    wpm_asset = wpm_lot.asset
+    ticker_value = wpm_asset.ticker
+    asset_type_value = wpm_asset.asset_type
     
     return ticker_value, asset_type_value
 
@@ -316,7 +281,27 @@ def get_all_positions(
     
     def get_sort_key(position: Position):
         """Get sort key for a position, handling None values."""
-        value = getattr(position, sort_by, None)
+        # Direct attribute access for sort_by field
+        if sort_by == "ticker":
+            value = position.ticker
+        elif sort_by == "asset_type":
+            value = position.asset_type
+        elif sort_by == "quantity":
+            value = position.quantity
+        elif sort_by == "average_price":
+            value = position.average_price
+        elif sort_by == "cost_basis":
+            value = position.cost_basis
+        elif sort_by == "cost_basis_method":
+            value = position.cost_basis_method
+        elif sort_by == "current_price":
+            value = position.current_price
+        elif sort_by == "market_value":
+            value = position.market_value
+        elif sort_by == "unrealized_gain_loss":
+            value = position.unrealized_gain_loss
+        else:
+            value = None
         
         # Handle None values: None sorts to beginning for asc, end for desc
         # Use tuple (is_none_flag, value) where:
@@ -403,10 +388,10 @@ def get_asset_trades(
             # Extract ticker and asset_type using helper function
             ticker_value, asset_type_value = _extract_ticker_and_asset_type_from_trade(wpm_trade, ticker)
 
-            order_instruction = getattr(wpm_trade, 'order_instruction', 'buy')
-            quantity = float(getattr(wpm_trade, 'quantity', 0))
-            price = float(getattr(wpm_trade, 'price', 0))
-            broker = getattr(wpm_trade, 'broker', 'Unknown')
+            order_instruction = wpm_trade.order_instruction
+            quantity = float(wpm_trade.quantity)
+            price = float(wpm_trade.price)
+            broker = wpm_trade.broker
 
             # Determine trade action using helper function
             action = _determine_trade_action(wpm_trade, order_instruction)
@@ -446,7 +431,12 @@ def get_asset_trades(
     
     def get_sort_key(trade: Trade):
         """Get sort key for a trade, handling date string parsing."""
-        value = getattr(trade, sort_by, None)
+        # Direct attribute access for sort_by field
+        if sort_by == "date":
+            value = trade.date
+        else:
+            # Only "date" is a valid sort field for Trade
+            value = None
         
         # For date field, parse ISO format string to date object for proper sorting
         if sort_by == "date" and value is not None:
@@ -539,21 +529,22 @@ def get_asset_lots(
             ticker_value, asset_type_value = _extract_ticker_and_asset_type_from_lot(wpm_lot, ticker)
 
             # Extract lot quantities and cost basis
-            original_quantity = float(getattr(wpm_lot, 'original_quantity', 0))
-            remaining_quantity = float(getattr(wpm_lot, 'remaining_quantity', 0))
-            cost_basis = float(getattr(wpm_lot, 'cost_basis', 0))
+            original_quantity = float(wpm_lot.original_quantity)
+            remaining_quantity = float(wpm_lot.remaining_quantity)
+            cost_basis = float(wpm_lot.cost_basis)
 
             # Transform matched sells
             matched_sells = []
-            wpm_matched_sells = getattr(wpm_lot, 'matched_sells', [])
+            wpm_matched_sells = wpm_lot.matched_sells
             for wpm_matched_sell in wpm_matched_sells:
                 try:
                     # Handle matched_sell as tuple: (trade, consumed_quantity) or (consumed_quantity, trade)
                     if isinstance(wpm_matched_sell, tuple):
                         # Try both orderings: (trade, consumed_quantity) or (consumed_quantity, trade)
                         if len(wpm_matched_sell) >= 2:
-                            # Check if first element has a 'date' attribute (it's likely the trade)
-                            if hasattr(wpm_matched_sell[0], 'date') or hasattr(wpm_matched_sell[0], 'quantity'):
+                            # Check if first element is a Trade object (it has a date attribute)
+                            # Use isinstance to check if it's a WPMTrade object
+                            if isinstance(wpm_matched_sell[0], WPMTrade):
                                 wpm_trade = wpm_matched_sell[0]
                                 consumed_quantity = float(wpm_matched_sell[1])
                             else:
@@ -564,14 +555,9 @@ def get_asset_lots(
                             logger.warning(f"Unexpected tuple length for matched_sell: {len(wpm_matched_sell)}")
                             continue
                     else:
-                        # Extract consumed quantity
-                        consumed_quantity = float(getattr(wpm_matched_sell, 'consumed_quantity', 0))
-
-                        # Extract trade from matched sell
-                        wpm_trade = getattr(wpm_matched_sell, 'trade', None)
-                        if wpm_trade is None:
-                            # If no trade attribute, the matched_sell might be the trade itself
-                            wpm_trade = wpm_matched_sell
+                        # Extract consumed quantity and trade from matched sell object
+                        consumed_quantity = float(wpm_matched_sell.consumed_quantity)
+                        wpm_trade = wpm_matched_sell.trade
 
                     # Transform trade to API Trade model using helper function
                     trade_date_str = _parse_date_to_iso_string(wpm_trade.date)
@@ -579,10 +565,10 @@ def get_asset_lots(
                     # Extract ticker and asset_type using helper function
                     trade_ticker, trade_asset_type = _extract_ticker_and_asset_type_from_trade(wpm_trade, ticker_value)
 
-                    order_instruction = getattr(wpm_trade, 'order_instruction', 'sell')
-                    trade_quantity = float(getattr(wpm_trade, 'quantity', 0))
-                    trade_price = float(getattr(wpm_trade, 'price', 0))
-                    broker = getattr(wpm_trade, 'broker', 'Unknown')
+                    order_instruction = wpm_trade.order_instruction
+                    trade_quantity = float(wpm_trade.quantity)
+                    trade_price = float(wpm_trade.price)
+                    broker = wpm_trade.broker
 
                     # Determine action using helper function (should be Sell for matched sells)
                     action = _determine_trade_action(wpm_trade, order_instruction)
@@ -643,7 +629,17 @@ def get_asset_lots(
     
     def get_sort_key(lot: Lot):
         """Get sort key for a lot, handling date string parsing and None values."""
-        value = getattr(lot, sort_by, None)
+        # Direct attribute access for sort_by field
+        if sort_by == "date":
+            value = lot.date
+        elif sort_by == "original_quantity":
+            value = lot.original_quantity
+        elif sort_by == "remaining_quantity":
+            value = lot.remaining_quantity
+        elif sort_by == "cost_basis":
+            value = lot.cost_basis
+        else:
+            value = None
         
         # For date field, parse ISO format string to date object for proper sorting
         if sort_by == "date" and value is not None:
