@@ -297,7 +297,7 @@
     "/portfolio/lots/{ticker}": {
       "get": {
         "summary": "Get Asset Lots Endpoint",
-        "description": "GET endpoint to retrieve all lots for a specific asset ticker with pagination, date filtering, and sorting support.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    page: Page number (1-indexed, default: 1)\n    size: Number of items per page (default: 20, max: 100)\n    start_date: Optional start date for filtering lots (ISO format YYYY-MM-DD, inclusive)\n    end_date: Optional end date for filtering lots (ISO format YYYY-MM-DD, inclusive)\n    sort_by: Field to sort by (default: \"date\")\n    sort_order: Sort order - \"asc\" or \"desc\" (default: \"asc\")\n\nReturns:\n    PortfolioAssetLotsResponse containing paginated list of lots\n\nRaises:\n    HTTPException: 400 if date format is invalid, start_date > end_date, or sort_by field is invalid\n    HTTPException: 404 if ticker is not found\n    HTTPException: 500 if portfolio data is not available",
+        "description": "GET endpoint to retrieve all lots for a specific asset ticker with pagination, date filtering, and sorting support.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n    page: Page number (1-indexed, default: 1)\n    size: Number of items per page (default: 20, max: 100)\n    start_date: Optional start date for filtering lots (ISO format YYYY-MM-DD, inclusive)\n    end_date: Optional end date for filtering lots (ISO format YYYY-MM-DD, inclusive)\n    sort_by: Field to sort by (default: \"date\")\n    sort_order: Sort order - \"asc\" or \"desc\" (default: \"asc\")\n\nReturns:\n    PortfolioAssetLotsResponse containing paginated list of lots\n\nRaises:\n    HTTPException: 400 if date format is invalid, start_date > end_date, or sort_by field is invalid\n    HTTPException: 404 if ticker is not found\n    HTTPException: 500 if portfolio data is not available",
         "operationId": "get_asset_lots_endpoint_portfolio_lots__ticker__get",
         "security": [
           {
@@ -543,6 +543,47 @@
             "type": "array",
             "title": "Matched Sells",
             "description": "List of matched sells that consumed from this lot"
+          },
+          "broker": {
+            "type": "string",
+            "title": "Broker",
+            "description": "Broker name from which the lot originated"
+          },
+          "realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Pnl",
+            "description": "Realized profit or loss from matched sells in USD"
+          },
+          "unrealized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pnl",
+            "description": "Unrealized profit or loss on remaining quantity in USD"
+          },
+          "total_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Pnl",
+            "description": "Total profit or loss (realized + unrealized) in USD"
           }
         },
         "type": "object",
@@ -552,7 +593,8 @@
           "asset_type",
           "original_quantity",
           "remaining_quantity",
-          "cost_basis"
+          "cost_basis",
+          "broker"
         ],
         "title": "Lot",
         "description": "Model representing a single lot."

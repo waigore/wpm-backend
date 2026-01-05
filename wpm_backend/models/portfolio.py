@@ -88,6 +88,12 @@ class Lot(BaseModel):
     matched_sells: list[MatchedSell] = Field(
         default_factory=list, description="List of matched sells that consumed from this lot"
     )
+    broker: str = Field(..., description="Broker name from which the lot originated")
+    realized_pnl: Optional[float] = Field(None, description="Realized profit or loss from matched sells in USD")
+    unrealized_pnl: Optional[float] = Field(
+        None, description="Unrealized profit or loss on remaining quantity in USD"
+    )
+    total_pnl: Optional[float] = Field(None, description="Total profit or loss (realized + unrealized) in USD")
 
 
 class PortfolioAssetLotsResponse(BaseModel):

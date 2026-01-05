@@ -36,6 +36,10 @@ VALID_LOT_SORT_FIELDS = {
     "original_quantity",
     "remaining_quantity",
     "cost_basis",
+    "broker",
+    "realized_pnl",
+    "unrealized_pnl",
+    "total_pnl",
 }
 
 
@@ -457,6 +461,7 @@ def get_asset_trades(
 def get_asset_lots(
     composite: CompositePortfolio,
     ticker: str,
+    price_service: PriceService,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     sort_by: Optional[str] = None,
@@ -468,6 +473,7 @@ def get_asset_lots(
     Args:
         composite: CompositePortfolio instance from wpm library
         ticker: Asset ticker symbol to retrieve lots for
+        price_service: PriceService instance for fetching current prices
         start_date: Optional start date for filtering lots (inclusive)
         end_date: Optional end date for filtering lots (inclusive)
         sort_by: Field name to sort by (default: None, which defaults to "date")
@@ -488,6 +494,11 @@ def get_asset_lots(
     except Exception as e:
         logger.error(f"Error retrieving lots for ticker {ticker}: {e}", exc_info=True)
         raise ValueError(f"Failed to retrieve lots for ticker {ticker}: {e}")
+
+    # Fetch current prices for P&L calculations
+    logger.info("Fetching current prices for P&L calculations")
+    price_map = fetch_price_map(composite, price_service)
+    logger.info(f"Fetched prices for {len(price_map)} assets")
 
     # Filter by date range if provided
     filtered_lots = []
@@ -532,6 +543,24 @@ def get_asset_lots(
             original_quantity = float(wpm_lot.original_quantity)
             remaining_quantity = float(wpm_lot.remaining_quantity)
             cost_basis = float(wpm_lot.cost_basis)
+
+            # Extract broker
+            broker = wpm_lot.broker
+
+            # Calculate P&L using wpm library methods
+            realized_pnl = wpm_lot.get_realized_pnl()
+
+            # Get current price for this lot's asset
+            current_price = price_map.get(wpm_lot.asset)
+
+            # Calculate unrealized P&L (only if price available)
+            if current_price is not None:
+                unrealized_pnl = wpm_lot.get_unrealized_pnl(current_price)
+            else:
+                unrealized_pnl = None
+
+            # Calculate total P&L (handles None current_price)
+            total_pnl = wpm_lot.get_total_pnl(current_price)
 
             # Transform matched sells
             matched_sells = []
@@ -604,6 +633,10 @@ def get_asset_lots(
                 remaining_quantity=remaining_quantity,
                 cost_basis=cost_basis,
                 matched_sells=matched_sells,
+                broker=broker,
+                realized_pnl=realized_pnl,
+                unrealized_pnl=unrealized_pnl,
+                total_pnl=total_pnl,
             )
             api_lots.append(api_lot)
         except Exception as e:
@@ -638,6 +671,14 @@ def get_asset_lots(
             value = lot.remaining_quantity
         elif sort_by == "cost_basis":
             value = lot.cost_basis
+        elif sort_by == "broker":
+            value = lot.broker
+        elif sort_by == "realized_pnl":
+            value = lot.realized_pnl
+        elif sort_by == "unrealized_pnl":
+            value = lot.unrealized_pnl
+        elif sort_by == "total_pnl":
+            value = lot.total_pnl
         else:
             value = None
         
@@ -649,7 +690,7 @@ def get_asset_lots(
                 # If parsing fails, use string comparison as fallback
                 return value
         
-        # Handle None values for numeric fields
+        # Handle None values for numeric and string fields
         if value is None:
             sentinel = float('-inf') if not reverse else float('inf')
             return (1 if reverse else 0, sentinel)

@@ -1828,11 +1828,18 @@ def test_get_asset_lots_service(mock_composite_portfolio, mock_price_service):
     matched_sell.consumed_quantity = Decimal("25.0")
 
     lot.matched_sells = [matched_sell]
+    lot.broker = "IBKR"
+    lot.get_realized_pnl = Mock(return_value=250.0)
+    lot.get_unrealized_pnl = Mock(return_value=500.0)
+    lot.get_total_pnl = Mock(return_value=750.0)
 
     # Mock get_asset_lots method
     mock_composite_portfolio.get_asset_lots.return_value = [lot]
 
-    lots = get_asset_lots(mock_composite_portfolio, "AAPL")
+    # Mock fetch_price_map
+    mock_price_map = {asset: 175.50}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        lots = get_asset_lots(mock_composite_portfolio, "AAPL", mock_price_service)
 
     assert len(lots) == 1
     api_lot = lots[0]
@@ -1846,6 +1853,10 @@ def test_get_asset_lots_service(mock_composite_portfolio, mock_price_service):
     assert api_lot.matched_sells[0].consumed_quantity == 25.0
     assert api_lot.matched_sells[0].trade.action == "Sell"
     assert api_lot.matched_sells[0].trade.broker == "IBKR"
+    assert api_lot.broker == "IBKR"
+    assert api_lot.realized_pnl == 250.0
+    assert api_lot.unrealized_pnl == 500.0
+    assert api_lot.total_pnl == 750.0
 
 
 def test_get_asset_lots_with_date_filtering(mock_composite_portfolio, mock_price_service):
@@ -1865,6 +1876,10 @@ def test_get_asset_lots_with_date_filtering(mock_composite_portfolio, mock_price
     lot1.remaining_quantity = Decimal("100.0")
     lot1.cost_basis = 15000.0
     lot1.matched_sells = []
+    lot1.broker = "IBKR"
+    lot1.get_realized_pnl = Mock(return_value=0.0)
+    lot1.get_unrealized_pnl = Mock(return_value=100.0)
+    lot1.get_total_pnl = Mock(return_value=100.0)
 
     lot2 = Mock()
     lot2.purchase_date = date(2024, 2, 20)
@@ -1873,6 +1888,10 @@ def test_get_asset_lots_with_date_filtering(mock_composite_portfolio, mock_price
     lot2.remaining_quantity = Decimal("50.0")
     lot2.cost_basis = 7500.0
     lot2.matched_sells = []
+    lot2.broker = "Futu"
+    lot2.get_realized_pnl = Mock(return_value=0.0)
+    lot2.get_unrealized_pnl = Mock(return_value=200.0)
+    lot2.get_total_pnl = Mock(return_value=200.0)
 
     lot3 = Mock()
     lot3.purchase_date = date(2024, 3, 10)
@@ -1881,16 +1900,24 @@ def test_get_asset_lots_with_date_filtering(mock_composite_portfolio, mock_price
     lot3.remaining_quantity = Decimal("25.0")
     lot3.cost_basis = 3750.0
     lot3.matched_sells = []
+    lot3.broker = "IBKR"
+    lot3.get_realized_pnl = Mock(return_value=0.0)
+    lot3.get_unrealized_pnl = Mock(return_value=50.0)
+    lot3.get_total_pnl = Mock(return_value=50.0)
 
     mock_composite_portfolio.get_asset_lots.return_value = [lot1, lot2, lot3]
 
-    # Filter by date range
-    lots = get_asset_lots(
-        mock_composite_portfolio,
-        "AAPL",
-        start_date=date(2024, 2, 1),
-        end_date=date(2024, 2, 28),
-    )
+    # Mock fetch_price_map
+    mock_price_map = {asset: 160.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Filter by date range
+        lots = get_asset_lots(
+            mock_composite_portfolio,
+            "AAPL",
+            mock_price_service,
+            start_date=date(2024, 2, 1),
+            end_date=date(2024, 2, 28),
+        )
 
     # Should only return lot2 (within date range)
     assert len(lots) == 1
@@ -1914,6 +1941,10 @@ def test_get_asset_lots_sorting(mock_composite_portfolio, mock_price_service):
     lot1.remaining_quantity = Decimal("75.0")
     lot1.cost_basis = 15000.0
     lot1.matched_sells = []
+    lot1.broker = "IBKR"
+    lot1.get_realized_pnl = Mock(return_value=0.0)
+    lot1.get_unrealized_pnl = Mock(return_value=100.0)
+    lot1.get_total_pnl = Mock(return_value=100.0)
 
     lot2 = Mock()
     lot2.purchase_date = date(2024, 1, 15)
@@ -1922,6 +1953,10 @@ def test_get_asset_lots_sorting(mock_composite_portfolio, mock_price_service):
     lot2.remaining_quantity = Decimal("50.0")
     lot2.cost_basis = 5000.0
     lot2.matched_sells = []
+    lot2.broker = "Futu"
+    lot2.get_realized_pnl = Mock(return_value=0.0)
+    lot2.get_unrealized_pnl = Mock(return_value=200.0)
+    lot2.get_total_pnl = Mock(return_value=200.0)
 
     lot3 = Mock()
     lot3.purchase_date = date(2024, 3, 10)
@@ -1930,46 +1965,53 @@ def test_get_asset_lots_sorting(mock_composite_portfolio, mock_price_service):
     lot3.remaining_quantity = Decimal("25.0")
     lot3.cost_basis = 2500.0
     lot3.matched_sells = []
+    lot3.broker = "IBKR"
+    lot3.get_realized_pnl = Mock(return_value=0.0)
+    lot3.get_unrealized_pnl = Mock(return_value=50.0)
+    lot3.get_total_pnl = Mock(return_value=50.0)
 
     # Mock get_asset_lots method - return in non-chronological order
     mock_composite_portfolio.get_asset_lots.return_value = [lot1, lot2, lot3]
 
-    # Test sorting by date ascending (default)
-    lots_asc = get_asset_lots(
-        mock_composite_portfolio, "AAPL", sort_by="date", sort_order="asc"
-    )
+    # Mock fetch_price_map
+    mock_price_map = {asset: 160.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Test sorting by date ascending (default)
+        lots_asc = get_asset_lots(
+            mock_composite_portfolio, "AAPL", mock_price_service, sort_by="date", sort_order="asc"
+        )
 
-    assert len(lots_asc) == 3
-    # Should be sorted ascending by date
-    assert lots_asc[0].date == "2024-01-15"
-    assert lots_asc[1].date == "2024-02-20"
-    assert lots_asc[2].date == "2024-03-10"
+        assert len(lots_asc) == 3
+        # Should be sorted ascending by date
+        assert lots_asc[0].date == "2024-01-15"
+        assert lots_asc[1].date == "2024-02-20"
+        assert lots_asc[2].date == "2024-03-10"
 
-    # Test sorting by date descending
-    lots_desc = get_asset_lots(
-        mock_composite_portfolio, "AAPL", sort_by="date", sort_order="desc"
-    )
+        # Test sorting by date descending
+        lots_desc = get_asset_lots(
+            mock_composite_portfolio, "AAPL", mock_price_service, sort_by="date", sort_order="desc"
+        )
 
-    assert len(lots_desc) == 3
-    # Should be sorted descending by date
-    assert lots_desc[0].date == "2024-03-10"
-    assert lots_desc[1].date == "2024-02-20"
-    assert lots_desc[2].date == "2024-01-15"
+        assert len(lots_desc) == 3
+        # Should be sorted descending by date
+        assert lots_desc[0].date == "2024-03-10"
+        assert lots_desc[1].date == "2024-02-20"
+        assert lots_desc[2].date == "2024-01-15"
 
-    # Test sorting by original_quantity
-    lots_qty = get_asset_lots(
-        mock_composite_portfolio, "AAPL", sort_by="original_quantity", sort_order="asc"
-    )
+        # Test sorting by original_quantity
+        lots_qty = get_asset_lots(
+            mock_composite_portfolio, "AAPL", mock_price_service, sort_by="original_quantity", sort_order="asc"
+        )
 
-    assert len(lots_qty) == 3
-    assert lots_qty[0].original_quantity == 25.0
-    assert lots_qty[1].original_quantity == 50.0
-    assert lots_qty[2].original_quantity == 100.0
+        assert len(lots_qty) == 3
+        assert lots_qty[0].original_quantity == 25.0
+        assert lots_qty[1].original_quantity == 50.0
+        assert lots_qty[2].original_quantity == 100.0
 
-    # Test sorting by cost_basis
-    lots_cost = get_asset_lots(
-        mock_composite_portfolio, "AAPL", sort_by="cost_basis", sort_order="desc"
-    )
+        # Test sorting by cost_basis
+        lots_cost = get_asset_lots(
+            mock_composite_portfolio, "AAPL", mock_price_service, sort_by="cost_basis", sort_order="desc"
+        )
 
     assert len(lots_cost) == 3
     assert lots_cost[0].cost_basis == 15000.0
@@ -1994,13 +2036,20 @@ def test_get_asset_lots_sorting_invalid_field(mock_composite_portfolio, mock_pri
     lot.remaining_quantity = Decimal("100.0")
     lot.cost_basis = 15000.0
     lot.matched_sells = []
+    lot.broker = "IBKR"
+    lot.get_realized_pnl = Mock(return_value=0.0)
+    lot.get_unrealized_pnl = Mock(return_value=100.0)
+    lot.get_total_pnl = Mock(return_value=100.0)
 
     mock_composite_portfolio.get_asset_lots.return_value = [lot]
 
-    with pytest.raises(ValueError, match="Invalid sort_by field"):
-        get_asset_lots(
-            mock_composite_portfolio, "AAPL", sort_by="invalid_field"
-        )
+    # Mock fetch_price_map
+    mock_price_map = {asset: 160.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        with pytest.raises(ValueError, match="Invalid sort_by field"):
+            get_asset_lots(
+                mock_composite_portfolio, "AAPL", mock_price_service, sort_by="invalid_field"
+            )
 
 
 def test_get_asset_lots_invalid_ticker(mock_composite_portfolio, mock_price_service):
@@ -2011,7 +2060,7 @@ def test_get_asset_lots_invalid_ticker(mock_composite_portfolio, mock_price_serv
     mock_composite_portfolio.get_asset_lots.side_effect = ValueError("Ticker not found")
 
     with pytest.raises(ValueError, match="Failed to retrieve lots"):
-        get_asset_lots(mock_composite_portfolio, "INVALID")
+        get_asset_lots(mock_composite_portfolio, "INVALID", mock_price_service)
 
 
 def test_get_asset_lots_matched_sells(mock_composite_portfolio, mock_price_service):
@@ -2058,10 +2107,17 @@ def test_get_asset_lots_matched_sells(mock_composite_portfolio, mock_price_servi
     lot.remaining_quantity = Decimal("75.0")
     lot.cost_basis = 15000.0
     lot.matched_sells = [matched_sell1, matched_sell2]
+    lot.broker = "IBKR"
+    lot.get_realized_pnl = Mock(return_value=250.0)
+    lot.get_unrealized_pnl = Mock(return_value=500.0)
+    lot.get_total_pnl = Mock(return_value=750.0)
 
     mock_composite_portfolio.get_asset_lots.return_value = [lot]
 
-    lots = get_asset_lots(mock_composite_portfolio, "AAPL")
+    # Mock fetch_price_map
+    mock_price_map = {asset: 175.50}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        lots = get_asset_lots(mock_composite_portfolio, "AAPL", mock_price_service)
 
     assert len(lots) == 1
     api_lot = lots[0]
@@ -2096,15 +2152,22 @@ def test_portfolio_asset_lots_endpoint(client_with_portfolio, test_settings):
     lot.remaining_quantity = Decimal("75.0")
     lot.cost_basis = 15000.0
     lot.matched_sells = []
+    lot.broker = "IBKR"
+    lot.get_realized_pnl = Mock(return_value=250.0)
+    lot.get_unrealized_pnl = Mock(return_value=500.0)
+    lot.get_total_pnl = Mock(return_value=750.0)
 
     # Mock get_asset_lots
     portfolio = client_with_portfolio.app.state.composite_portfolio
     portfolio.get_asset_lots.return_value = [lot]
 
-    response = client_with_portfolio.get(
-        "/portfolio/lots/AAPL",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    # Mock fetch_price_map
+    mock_price_map = {asset: 175.50}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/lots/AAPL",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
     assert response.status_code == 200
     data = response.json()
@@ -2124,6 +2187,15 @@ def test_portfolio_asset_lots_endpoint(client_with_portfolio, test_settings):
     assert len(lots["items"]) == 1
     assert lots["items"][0]["ticker"] == "AAPL"
     assert lots["items"][0]["date"] == "2024-01-15"
+    # Verify new fields are present
+    assert "broker" in lots["items"][0]
+    assert lots["items"][0]["broker"] == "IBKR"
+    assert "realized_pnl" in lots["items"][0]
+    assert lots["items"][0]["realized_pnl"] == 250.0
+    assert "unrealized_pnl" in lots["items"][0]
+    assert lots["items"][0]["unrealized_pnl"] == 500.0
+    assert "total_pnl" in lots["items"][0]
+    assert lots["items"][0]["total_pnl"] == 750.0
 
 
 def test_portfolio_asset_lots_endpoint_with_date_filtering(client_with_portfolio, test_settings):
@@ -2148,6 +2220,10 @@ def test_portfolio_asset_lots_endpoint_with_date_filtering(client_with_portfolio
     lot1.remaining_quantity = Decimal("100.0")
     lot1.cost_basis = 15000.0
     lot1.matched_sells = []
+    lot1.broker = "IBKR"
+    lot1.get_realized_pnl = Mock(return_value=0.0)
+    lot1.get_unrealized_pnl = Mock(return_value=100.0)
+    lot1.get_total_pnl = Mock(return_value=100.0)
 
     lot2 = Mock()
     lot2.purchase_date = date(2024, 2, 20)
@@ -2156,14 +2232,21 @@ def test_portfolio_asset_lots_endpoint_with_date_filtering(client_with_portfolio
     lot2.remaining_quantity = Decimal("50.0")
     lot2.cost_basis = 7500.0
     lot2.matched_sells = []
+    lot2.broker = "Futu"
+    lot2.get_realized_pnl = Mock(return_value=0.0)
+    lot2.get_unrealized_pnl = Mock(return_value=200.0)
+    lot2.get_total_pnl = Mock(return_value=200.0)
 
     portfolio = client_with_portfolio.app.state.composite_portfolio
     portfolio.get_asset_lots.return_value = [lot1, lot2]
 
-    response = client_with_portfolio.get(
-        "/portfolio/lots/AAPL?start_date=2024-02-01&end_date=2024-02-28",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    # Mock fetch_price_map
+    mock_price_map = {asset: 160.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/lots/AAPL?start_date=2024-02-01&end_date=2024-02-28",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
     assert response.status_code == 200
     data = response.json()
@@ -2233,15 +2316,22 @@ def test_portfolio_asset_lots_endpoint_pagination(client_with_portfolio, test_se
         lot.remaining_quantity = Decimal("10.0")
         lot.cost_basis = 1500.0 + i * 100
         lot.matched_sells = []
+        lot.broker = "IBKR"
+        lot.get_realized_pnl = Mock(return_value=0.0)
+        lot.get_unrealized_pnl = Mock(return_value=100.0)
+        lot.get_total_pnl = Mock(return_value=100.0)
         lots.append(lot)
 
     portfolio = client_with_portfolio.app.state.composite_portfolio
     portfolio.get_asset_lots.return_value = lots
 
-    response = client_with_portfolio.get(
-        "/portfolio/lots/AAPL?page=1&size=2",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    # Mock fetch_price_map
+    mock_price_map = {asset: 110.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/lots/AAPL?page=1&size=2",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
     assert response.status_code == 200
     data = response.json()
@@ -2296,6 +2386,10 @@ def test_portfolio_asset_lots_sorting_by_date_asc(client_with_portfolio, test_se
     lot1.remaining_quantity = Decimal("100.0")
     lot1.cost_basis = 15000.0
     lot1.matched_sells = []
+    lot1.broker = "IBKR"
+    lot1.get_realized_pnl = Mock(return_value=0.0)
+    lot1.get_unrealized_pnl = Mock(return_value=100.0)
+    lot1.get_total_pnl = Mock(return_value=100.0)
 
     lot2 = Mock()
     lot2.purchase_date = date(2024, 1, 15)
@@ -2304,6 +2398,10 @@ def test_portfolio_asset_lots_sorting_by_date_asc(client_with_portfolio, test_se
     lot2.remaining_quantity = Decimal("50.0")
     lot2.cost_basis = 5000.0
     lot2.matched_sells = []
+    lot2.broker = "Futu"
+    lot2.get_realized_pnl = Mock(return_value=0.0)
+    lot2.get_unrealized_pnl = Mock(return_value=200.0)
+    lot2.get_total_pnl = Mock(return_value=200.0)
 
     lot3 = Mock()
     lot3.purchase_date = date(2024, 3, 10)
@@ -2312,14 +2410,21 @@ def test_portfolio_asset_lots_sorting_by_date_asc(client_with_portfolio, test_se
     lot3.remaining_quantity = Decimal("25.0")
     lot3.cost_basis = 2500.0
     lot3.matched_sells = []
+    lot3.broker = "IBKR"
+    lot3.get_realized_pnl = Mock(return_value=0.0)
+    lot3.get_unrealized_pnl = Mock(return_value=50.0)
+    lot3.get_total_pnl = Mock(return_value=50.0)
 
     portfolio = client_with_portfolio.app.state.composite_portfolio
     portfolio.get_asset_lots.return_value = [lot1, lot2, lot3]
 
-    response = client_with_portfolio.get(
-        "/portfolio/lots/AAPL?sort_by=date&sort_order=asc",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    # Mock fetch_price_map
+    mock_price_map = {asset: 160.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/lots/AAPL?sort_by=date&sort_order=asc",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
     assert response.status_code == 200
     data = response.json()
@@ -2353,6 +2458,10 @@ def test_portfolio_asset_lots_sorting_by_date_desc(client_with_portfolio, test_s
     lot1.remaining_quantity = Decimal("100.0")
     lot1.cost_basis = 15000.0
     lot1.matched_sells = []
+    lot1.broker = "IBKR"
+    lot1.get_realized_pnl = Mock(return_value=0.0)
+    lot1.get_unrealized_pnl = Mock(return_value=100.0)
+    lot1.get_total_pnl = Mock(return_value=100.0)
 
     lot2 = Mock()
     lot2.purchase_date = date(2024, 2, 20)
@@ -2361,6 +2470,10 @@ def test_portfolio_asset_lots_sorting_by_date_desc(client_with_portfolio, test_s
     lot2.remaining_quantity = Decimal("50.0")
     lot2.cost_basis = 5000.0
     lot2.matched_sells = []
+    lot2.broker = "Futu"
+    lot2.get_realized_pnl = Mock(return_value=0.0)
+    lot2.get_unrealized_pnl = Mock(return_value=200.0)
+    lot2.get_total_pnl = Mock(return_value=200.0)
 
     lot3 = Mock()
     lot3.purchase_date = date(2024, 3, 10)
@@ -2369,14 +2482,21 @@ def test_portfolio_asset_lots_sorting_by_date_desc(client_with_portfolio, test_s
     lot3.remaining_quantity = Decimal("25.0")
     lot3.cost_basis = 2500.0
     lot3.matched_sells = []
+    lot3.broker = "IBKR"
+    lot3.get_realized_pnl = Mock(return_value=0.0)
+    lot3.get_unrealized_pnl = Mock(return_value=50.0)
+    lot3.get_total_pnl = Mock(return_value=50.0)
 
     portfolio = client_with_portfolio.app.state.composite_portfolio
     portfolio.get_asset_lots.return_value = [lot1, lot2, lot3]
 
-    response = client_with_portfolio.get(
-        "/portfolio/lots/AAPL?sort_by=date&sort_order=desc",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    # Mock fetch_price_map
+    mock_price_map = {asset: 160.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/lots/AAPL?sort_by=date&sort_order=desc",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
     assert response.status_code == 200
     data = response.json()
@@ -2410,6 +2530,10 @@ def test_portfolio_asset_lots_sorting_by_original_quantity(client_with_portfolio
     lot1.remaining_quantity = Decimal("100.0")
     lot1.cost_basis = 15000.0
     lot1.matched_sells = []
+    lot1.broker = "IBKR"
+    lot1.get_realized_pnl = Mock(return_value=0.0)
+    lot1.get_unrealized_pnl = Mock(return_value=100.0)
+    lot1.get_total_pnl = Mock(return_value=100.0)
 
     lot2 = Mock()
     lot2.purchase_date = date(2024, 2, 20)
@@ -2418,14 +2542,21 @@ def test_portfolio_asset_lots_sorting_by_original_quantity(client_with_portfolio
     lot2.remaining_quantity = Decimal("25.0")
     lot2.cost_basis = 2500.0
     lot2.matched_sells = []
+    lot2.broker = "Futu"
+    lot2.get_realized_pnl = Mock(return_value=0.0)
+    lot2.get_unrealized_pnl = Mock(return_value=200.0)
+    lot2.get_total_pnl = Mock(return_value=200.0)
 
     portfolio = client_with_portfolio.app.state.composite_portfolio
     portfolio.get_asset_lots.return_value = [lot1, lot2]
 
-    response = client_with_portfolio.get(
-        "/portfolio/lots/AAPL?sort_by=original_quantity&sort_order=asc",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    # Mock fetch_price_map
+    mock_price_map = {asset: 160.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/lots/AAPL?sort_by=original_quantity&sort_order=asc",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
     assert response.status_code == 200
     data = response.json()
@@ -2458,14 +2589,21 @@ def test_portfolio_asset_lots_sorting_invalid_field(client_with_portfolio, test_
     lot.remaining_quantity = Decimal("100.0")
     lot.cost_basis = 15000.0
     lot.matched_sells = []
+    lot.broker = "IBKR"
+    lot.get_realized_pnl = Mock(return_value=0.0)
+    lot.get_unrealized_pnl = Mock(return_value=100.0)
+    lot.get_total_pnl = Mock(return_value=100.0)
 
     portfolio = client_with_portfolio.app.state.composite_portfolio
     portfolio.get_asset_lots.return_value = [lot]
 
-    response = client_with_portfolio.get(
-        "/portfolio/lots/AAPL?sort_by=invalid_field",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    # Mock fetch_price_map
+    mock_price_map = {asset: 160.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/lots/AAPL?sort_by=invalid_field",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
     assert response.status_code == 400
     assert "Invalid sort_by field" in response.json()["detail"]
@@ -2514,14 +2652,21 @@ def test_portfolio_asset_lots_endpoint_matched_sells(client_with_portfolio, test
     lot.remaining_quantity = Decimal("75.0")
     lot.cost_basis = 15000.0
     lot.matched_sells = [matched_sell]
+    lot.broker = "IBKR"
+    lot.get_realized_pnl = Mock(return_value=250.0)
+    lot.get_unrealized_pnl = Mock(return_value=500.0)
+    lot.get_total_pnl = Mock(return_value=750.0)
 
     portfolio = client_with_portfolio.app.state.composite_portfolio
     portfolio.get_asset_lots.return_value = [lot]
 
-    response = client_with_portfolio.get(
-        "/portfolio/lots/AAPL",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    # Mock fetch_price_map
+    mock_price_map = {asset: 175.50}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/lots/AAPL",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
     assert response.status_code == 200
     data = response.json()
@@ -2533,4 +2678,300 @@ def test_portfolio_asset_lots_endpoint_matched_sells(client_with_portfolio, test
     assert lot_data["matched_sells"][0]["consumed_quantity"] == 25.0
     assert lot_data["matched_sells"][0]["trade"]["action"] == "Sell"
     assert lot_data["matched_sells"][0]["trade"]["broker"] == "IBKR"
+
+    # Verify new fields
+    assert "broker" in lot_data
+    assert lot_data["broker"] == "IBKR"
+    assert "realized_pnl" in lot_data
+    assert lot_data["realized_pnl"] == 250.0
+    assert "unrealized_pnl" in lot_data
+    assert lot_data["unrealized_pnl"] == 500.0
+    assert "total_pnl" in lot_data
+    assert lot_data["total_pnl"] == 750.0
+
+
+def test_get_asset_lots_broker_field(mock_composite_portfolio, mock_price_service):
+    """Test broker field is extracted correctly from wpm_lot.broker."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot = Mock()
+    lot.purchase_date = date(2024, 1, 15)
+    lot.asset = asset
+    lot.original_quantity = Decimal("100.0")
+    lot.remaining_quantity = Decimal("100.0")
+    lot.cost_basis = 15000.0
+    lot.matched_sells = []
+    lot.broker = "Futu"
+    lot.get_realized_pnl = Mock(return_value=0.0)
+    lot.get_unrealized_pnl = Mock(return_value=100.0)
+    lot.get_total_pnl = Mock(return_value=100.0)
+
+    mock_composite_portfolio.get_asset_lots.return_value = [lot]
+
+    # Mock fetch_price_map
+    mock_price_map = {asset: 160.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        lots = get_asset_lots(mock_composite_portfolio, "AAPL", mock_price_service)
+
+    assert len(lots) == 1
+    assert lots[0].broker == "Futu"
+
+
+def test_get_asset_lots_realized_pnl(mock_composite_portfolio, mock_price_service):
+    """Test that get_realized_pnl() is called and value is included."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset, Trade as WPMTrade
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    # Create lot with matched sells
+    matched_sell_trade = Mock(spec=WPMTrade)
+    matched_sell_trade.date = date(2024, 2, 20)
+    matched_sell_trade.asset = asset
+    matched_sell_trade.action = "Sell"
+    matched_sell_trade.order_instruction = "Limit"
+    matched_sell_trade.quantity = Decimal("25.0")
+    matched_sell_trade.price = 160.0
+    matched_sell_trade.broker = "IBKR"
+
+    matched_sell = Mock()
+    matched_sell.trade = matched_sell_trade
+    matched_sell.consumed_quantity = Decimal("25.0")
+
+    lot = Mock()
+    lot.purchase_date = date(2024, 1, 15)
+    lot.asset = asset
+    lot.original_quantity = Decimal("100.0")
+    lot.remaining_quantity = Decimal("75.0")
+    lot.cost_basis = 15000.0
+    lot.matched_sells = [matched_sell]
+    lot.broker = "IBKR"
+    lot.get_realized_pnl = Mock(return_value=250.0)
+    lot.get_unrealized_pnl = Mock(return_value=500.0)
+    lot.get_total_pnl = Mock(return_value=750.0)
+
+    mock_composite_portfolio.get_asset_lots.return_value = [lot]
+
+    # Mock fetch_price_map
+    mock_price_map = {asset: 175.50}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        lots = get_asset_lots(mock_composite_portfolio, "AAPL", mock_price_service)
+
+    assert len(lots) == 1
+    assert lots[0].realized_pnl == 250.0
+    lot.get_realized_pnl.assert_called_once()
+
+
+def test_get_asset_lots_unrealized_pnl(mock_composite_portfolio, mock_price_service):
+    """Test that get_unrealized_pnl(current_price) is called with current_price and value is included."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot = Mock()
+    lot.purchase_date = date(2024, 1, 15)
+    lot.asset = asset
+    lot.original_quantity = Decimal("100.0")
+    lot.remaining_quantity = Decimal("75.0")
+    lot.cost_basis = 15000.0
+    lot.matched_sells = []
+    lot.broker = "IBKR"
+    lot.get_realized_pnl = Mock(return_value=0.0)
+    lot.get_unrealized_pnl = Mock(return_value=500.0)
+    lot.get_total_pnl = Mock(return_value=500.0)
+
+    mock_composite_portfolio.get_asset_lots.return_value = [lot]
+
+    # Mock fetch_price_map with price available
+    mock_price_map = {asset: 175.50}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        lots = get_asset_lots(mock_composite_portfolio, "AAPL", mock_price_service)
+
+    assert len(lots) == 1
+    assert lots[0].unrealized_pnl == 500.0
+    lot.get_unrealized_pnl.assert_called_once_with(175.50)
+
+
+def test_get_asset_lots_unrealized_pnl_no_price(mock_composite_portfolio, mock_price_service):
+    """Test that unrealized_pnl is None when current_price is unavailable (method not called)."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot = Mock()
+    lot.purchase_date = date(2024, 1, 15)
+    lot.asset = asset
+    lot.original_quantity = Decimal("100.0")
+    lot.remaining_quantity = Decimal("75.0")
+    lot.cost_basis = 15000.0
+    lot.matched_sells = []
+    lot.broker = "IBKR"
+    lot.get_realized_pnl = Mock(return_value=0.0)
+    lot.get_unrealized_pnl = Mock(return_value=500.0)
+    lot.get_total_pnl = Mock(return_value=0.0)
+
+    mock_composite_portfolio.get_asset_lots.return_value = [lot]
+
+    # Mock fetch_price_map with no price (None)
+    mock_price_map = {asset: None}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        lots = get_asset_lots(mock_composite_portfolio, "AAPL", mock_price_service)
+
+    assert len(lots) == 1
+    assert lots[0].unrealized_pnl is None
+    # get_unrealized_pnl should not be called when price is None
+    lot.get_unrealized_pnl.assert_not_called()
+
+
+def test_get_asset_lots_total_pnl(mock_composite_portfolio, mock_price_service):
+    """Test that get_total_pnl(current_price) is called and value is included."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot = Mock()
+    lot.purchase_date = date(2024, 1, 15)
+    lot.asset = asset
+    lot.original_quantity = Decimal("100.0")
+    lot.remaining_quantity = Decimal("75.0")
+    lot.cost_basis = 15000.0
+    lot.matched_sells = []
+    lot.broker = "IBKR"
+    lot.get_realized_pnl = Mock(return_value=250.0)
+    lot.get_unrealized_pnl = Mock(return_value=500.0)
+    lot.get_total_pnl = Mock(return_value=750.0)
+
+    mock_composite_portfolio.get_asset_lots.return_value = [lot]
+
+    # Mock fetch_price_map
+    mock_price_map = {asset: 175.50}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        lots = get_asset_lots(mock_composite_portfolio, "AAPL", mock_price_service)
+
+    assert len(lots) == 1
+    assert lots[0].total_pnl == 750.0
+    lot.get_total_pnl.assert_called_once_with(175.50)
+
+
+def test_get_asset_lots_total_pnl_no_price(mock_composite_portfolio, mock_price_service):
+    """Test that get_total_pnl(None) is called when price is unavailable."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot = Mock()
+    lot.purchase_date = date(2024, 1, 15)
+    lot.asset = asset
+    lot.original_quantity = Decimal("100.0")
+    lot.remaining_quantity = Decimal("75.0")
+    lot.cost_basis = 15000.0
+    lot.matched_sells = []
+    lot.broker = "IBKR"
+    lot.get_realized_pnl = Mock(return_value=250.0)
+    lot.get_unrealized_pnl = Mock(return_value=500.0)
+    lot.get_total_pnl = Mock(return_value=250.0)  # Only realized when price is None
+
+    mock_composite_portfolio.get_asset_lots.return_value = [lot]
+
+    # Mock fetch_price_map with no price (None)
+    mock_price_map = {asset: None}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        lots = get_asset_lots(mock_composite_portfolio, "AAPL", mock_price_service)
+
+    assert len(lots) == 1
+    assert lots[0].total_pnl == 250.0
+    lot.get_total_pnl.assert_called_once_with(None)
+
+
+def test_get_asset_lots_sorting_new_fields(mock_composite_portfolio, mock_price_service):
+    """Test sorting by broker, realized_pnl, unrealized_pnl, total_pnl."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot1 = Mock()
+    lot1.purchase_date = date(2024, 1, 15)
+    lot1.asset = asset
+    lot1.original_quantity = Decimal("100.0")
+    lot1.remaining_quantity = Decimal("100.0")
+    lot1.cost_basis = 15000.0
+    lot1.matched_sells = []
+    lot1.broker = "Futu"
+    lot1.get_realized_pnl = Mock(return_value=100.0)
+    lot1.get_unrealized_pnl = Mock(return_value=200.0)
+    lot1.get_total_pnl = Mock(return_value=300.0)
+
+    lot2 = Mock()
+    lot2.purchase_date = date(2024, 2, 20)
+    lot2.asset = asset
+    lot2.original_quantity = Decimal("50.0")
+    lot2.remaining_quantity = Decimal("50.0")
+    lot2.cost_basis = 5000.0
+    lot2.matched_sells = []
+    lot2.broker = "IBKR"
+    lot2.get_realized_pnl = Mock(return_value=200.0)
+    lot2.get_unrealized_pnl = Mock(return_value=300.0)
+    lot2.get_total_pnl = Mock(return_value=500.0)
+
+    mock_composite_portfolio.get_asset_lots.return_value = [lot1, lot2]
+
+    # Mock fetch_price_map
+    mock_price_map = {asset: 160.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Test sorting by broker
+        lots_broker = get_asset_lots(
+            mock_composite_portfolio, "AAPL", mock_price_service, sort_by="broker", sort_order="asc"
+        )
+        assert lots_broker[0].broker == "Futu"
+        assert lots_broker[1].broker == "IBKR"
+
+        # Test sorting by realized_pnl
+        lots_realized = get_asset_lots(
+            mock_composite_portfolio, "AAPL", mock_price_service, sort_by="realized_pnl", sort_order="asc"
+        )
+        assert lots_realized[0].realized_pnl == 100.0
+        assert lots_realized[1].realized_pnl == 200.0
+
+        # Test sorting by unrealized_pnl
+        lots_unrealized = get_asset_lots(
+            mock_composite_portfolio, "AAPL", mock_price_service, sort_by="unrealized_pnl", sort_order="asc"
+        )
+        assert lots_unrealized[0].unrealized_pnl == 200.0
+        assert lots_unrealized[1].unrealized_pnl == 300.0
+
+        # Test sorting by total_pnl
+        lots_total = get_asset_lots(
+            mock_composite_portfolio, "AAPL", mock_price_service, sort_by="total_pnl", sort_order="asc"
+        )
+        assert lots_total[0].total_pnl == 300.0
+        assert lots_total[1].total_pnl == 500.0
 
