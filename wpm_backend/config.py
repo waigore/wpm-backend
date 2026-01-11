@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     import_dir: str = "import"
     log_level: str = "INFO"
     log_dir: str = "logs"
+    enable_performance_cache: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",

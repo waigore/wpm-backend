@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import sys
+from datetime import date
 from getpass import getpass
 from typing import Optional
 
@@ -246,11 +247,15 @@ class InteractiveCLI:
         except Exception as e:
             print(f"Error: Failed to connect to API: {e}")
 
-    def performance_command(self, end_date: str) -> None:
+    def performance_command(self, end_date: Optional[str] = None) -> None:
         """Call /portfolio/all/performance endpoint and display last 10 history points."""
         if not self.token:
             print("Error: Not logged in. Please run 'login' first.")
             return
+
+        # Default to today if end_date is not provided
+        if end_date is None:
+            end_date = date.today().isoformat()
 
         # Call portfolio/all/performance endpoint with authentication
         try:
@@ -338,7 +343,7 @@ class InteractiveCLI:
         print("  portfolio all   - Get all portfolio positions (requires login)")
         print("  trades <ticker> - Get all trades for an asset ticker (requires login)")
         print("  lots <ticker>   - Get all lots for an asset ticker (requires login)")
-        print("  performance YYYY-MM-DD - Get portfolio performance up to date (requires login)")
+        print("  performance [YYYY-MM-DD] - Get portfolio performance up to date (requires login, defaults to today)")
         print("  status          - Check application status (portfolio data, services)")
         print("  help            - Show this help message")
         print("  exit, quit      - Exit the CLI")
@@ -386,7 +391,8 @@ class InteractiveCLI:
                         end_date = parts[1]
                         self.performance_command(end_date)
                     else:
-                        print("Error: End date is required. Usage: performance YYYY-MM-DD")
+                        # Call without arguments to use default (today)
+                        self.performance_command()
                 elif cmd == "status":
                     self.status_command()
                 else:

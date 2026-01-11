@@ -444,7 +444,7 @@
     "/portfolio/all/performance": {
       "get": {
         "summary": "Get Portfolio Performance Endpoint",
-        "description": "GET endpoint to retrieve historical portfolio performance data.\n\nRequires JWT authentication.\n\nArgs:\n    username: Authenticated username (from token)\n    historical_portfolio: Historical composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n    end_date: Optional end date for performance tracking (ISO format YYYY-MM-DD, defaults to today)\n\nReturns:\n    PortfolioPerformanceResponse containing list of PortfolioHistoryPoint objects\n\nRaises:\n    HTTPException: 400 if date format is invalid or date range is invalid\n    HTTPException: 500 if historical portfolio is not available",
+        "description": "GET endpoint to retrieve historical portfolio performance data.\n\nRequires JWT authentication.\n\nArgs:\n    username: Authenticated username (from token)\n    historical_portfolio: Historical composite portfolio instance (injected via dependency)\n    cache_data: Performance cache and cache_end_date (injected via dependency)\n    end_date: Optional end date for performance tracking (ISO format YYYY-MM-DD, defaults to today)\n\nReturns:\n    PortfolioPerformanceResponse containing list of PortfolioHistoryPoint objects\n\nRaises:\n    HTTPException: 400 if date format is invalid, date range is invalid, or end_date > cache_end_date\n    HTTPException: 500 if historical portfolio or performance cache is not available",
         "operationId": "get_portfolio_performance_endpoint_portfolio_all_performance_get",
         "security": [
           {
@@ -887,13 +887,22 @@
             "type": "object",
             "title": "Asset Positions",
             "description": "Dictionary mapping ticker symbols to position values (quantity * price) on this date"
+          },
+          "prices": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Prices",
+            "description": "Dictionary mapping ticker symbols to asset prices on this date in USD"
           }
         },
         "type": "object",
         "required": [
           "date",
           "total_market_value",
-          "asset_positions"
+          "asset_positions",
+          "prices"
         ],
         "title": "PortfolioHistoryPoint",
         "description": "Model representing a single portfolio history point."

@@ -22,6 +22,7 @@ def test_settings() -> Settings:
         import_dir="import",
         log_level="INFO",
         log_dir="logs",
+        enable_performance_cache=False,
     )
 
 

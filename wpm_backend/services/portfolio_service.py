@@ -1,7 +1,7 @@
 """Business logic for portfolio operations, wraps wpm library calls."""
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 from wpm.models import Asset, Position as WPMPosition, Trade as WPMTrade
@@ -704,6 +704,64 @@ def get_asset_lots(
     return sorted_lots
 
 
+def get_cached_portfolio_performance(
+    cache: dict[str, PortfolioHistoryPoint],
+    cache_end_date: Optional[date],
+    start_date: date,
+    end_date: date,
+) -> List[PortfolioHistoryPoint]:
+    """
+    Retrieve and filter cached portfolio performance history points by date range.
+
+    Args:
+        cache: Dictionary keyed by ISO date string (YYYY-MM-DD), mapping to PortfolioHistoryPoint API models
+        cache_end_date: Maximum date in the cache (None if cache is empty)
+        start_date: Start date for performance tracking (inclusive)
+        end_date: End date for performance tracking (inclusive)
+
+    Returns:
+        List of PortfolioHistoryPoint API models, filtered by date range, in chronological order
+
+    Raises:
+        ValueError: If date range is invalid, cache_end_date is None, or end_date > cache_end_date
+    """
+    logger.info(f"Retrieving cached portfolio performance from {start_date} to {end_date}")
+    
+    # Validate cache_end_date
+    if cache_end_date is None:
+        raise ValueError("Performance cache is not available (cache_end_date is None)")
+    
+    # Validate date range
+    if start_date > end_date:
+        raise ValueError(f"start_date ({start_date}) must be less than or equal to end_date ({end_date})")
+    
+    # Validate end_date is not beyond cache
+    if end_date > cache_end_date:
+        raise ValueError(
+            f"end_date ({end_date}) exceeds maximum available date in cache ({cache_end_date})"
+        )
+    
+    # Iterate through dates from start_date to end_date (inclusive) and retrieve from cache
+    history_points = []
+    current_date = start_date
+    while current_date <= end_date:
+        date_str = current_date.isoformat()
+        if date_str in cache:
+            cached_point = cache[date_str]
+            history_points.append(cached_point)
+        else:
+            # Log warning if date is missing from cache (shouldn't happen in normal operation)
+            logger.warning(f"Date {date_str} not found in performance cache")
+        # Increment date by one day
+        current_date += timedelta(days=1)
+    
+    logger.info(
+        f"Retrieved {len(history_points)} history points from cache "
+        f"(from {start_date} to {end_date})"
+    )
+    return history_points
+
+
 def get_portfolio_performance(
     portfolio: CompositePortfolio,
     price_service: PriceService,
@@ -748,11 +806,15 @@ def get_portfolio_performance(
             # Extract asset_positions (already Dict[str, float])
             asset_positions = wpm_history_point.asset_positions
             
+            # Extract prices (already Dict[str, float])
+            prices = wpm_history_point.prices
+            
             # Create API PortfolioHistoryPoint model
             api_history_point = PortfolioHistoryPoint(
                 date=history_date_str,
                 total_market_value=total_market_value,
                 asset_positions=asset_positions,
+                prices=prices,
             )
             api_history_points.append(api_history_point)
         except Exception as e:

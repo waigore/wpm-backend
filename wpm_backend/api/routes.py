@@ -15,7 +15,7 @@ from wpm_backend.auth.auth import authenticate_user, create_access_token, verify
 from wpm_backend.config import Settings, get_settings
 from wpm_backend.models.auth import LoginRequest, LoginResponse
 from wpm_backend.models.portfolio import PortfolioHistoryPoint, PortfolioPerformanceResponse, Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesResponse
-from wpm_backend.services.portfolio_service import get_all_positions, get_asset_lots, get_asset_trades, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
+from wpm_backend.services.portfolio_service import get_all_positions, get_asset_lots, get_asset_trades, get_cached_portfolio_performance, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -495,11 +495,35 @@ def get_historical_portfolio(request: Request) -> CompositePortfolio:
     return portfolio
 
 
+def get_performance_cache(request: Request) -> tuple[dict[str, PortfolioHistoryPoint], Optional[date]]:
+    """
+    Dependency function to get performance cache from app state.
+
+    Args:
+        request: FastAPI Request object to access app.state
+
+    Returns:
+        Tuple of (cache_dict, cache_end_date)
+
+    Raises:
+        HTTPException: 500 if performance cache is not available
+    """
+    cache = getattr(request.app.state, "performance_cache", None)
+    cache_end_date = getattr(request.app.state, "performance_cache_end_date", None)
+    if cache is None:
+        logger.error("Performance cache not available in application state")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Performance cache not available",
+        )
+    return cache, cache_end_date
+
+
 @router.get("/portfolio/all/performance", response_model=PortfolioPerformanceResponse)
 def get_portfolio_performance_endpoint(
     username: str = Depends(get_current_user),
     historical_portfolio: CompositePortfolio = Depends(get_historical_portfolio),
-    price_service: PriceService = Depends(get_price_service),
+    cache_data: tuple[dict[str, PortfolioHistoryPoint], Optional[date]] = Depends(get_performance_cache),
     end_date: Optional[str] = Query(None, description="End date for performance tracking (ISO format YYYY-MM-DD)"),
 ) -> PortfolioPerformanceResponse:
     """
@@ -510,19 +534,30 @@ def get_portfolio_performance_endpoint(
     Args:
         username: Authenticated username (from token)
         historical_portfolio: Historical composite portfolio instance (injected via dependency)
-        price_service: Price service instance (injected via dependency)
+        cache_data: Performance cache and cache_end_date (injected via dependency)
         end_date: Optional end date for performance tracking (ISO format YYYY-MM-DD, defaults to today)
 
     Returns:
         PortfolioPerformanceResponse containing list of PortfolioHistoryPoint objects
 
     Raises:
-        HTTPException: 400 if date format is invalid or date range is invalid
-        HTTPException: 500 if historical portfolio is not available
+        HTTPException: 400 if date format is invalid, date range is invalid, or end_date > cache_end_date
+        HTTPException: 500 if historical portfolio or performance cache is not available
     """
     logger.info(
         f"Portfolio performance request received from user: {username}, end_date={end_date}"
     )
+    
+    # Unpack cache data
+    cache, cache_end_date = cache_data
+    
+    # Validate cache is not empty
+    if not cache:
+        logger.error("Performance cache is empty")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Performance cache is empty",
+        )
     
     # Get start_date from portfolio
     start_date_obj = historical_portfolio.start_date
@@ -548,10 +583,10 @@ def get_portfolio_performance_endpoint(
         )
     
     try:
-        # Get portfolio performance
-        history_points = get_portfolio_performance(
-            historical_portfolio,
-            price_service,
+        # Get portfolio performance from cache
+        history_points = get_cached_portfolio_performance(
+            cache,
+            cache_end_date,
             start_date_obj,
             end_date_obj,
         )
@@ -563,8 +598,22 @@ def get_portfolio_performance_endpoint(
         
         return PortfolioPerformanceResponse(history_points=history_points)
     except ValueError as e:
-        # Handle invalid date range or other value errors
+        # Handle invalid date range or cache-related errors
         logger.warning(f"Error retrieving portfolio performance: {e}")
+        # Check if error indicates end_date > cache_end_date
+        error_str = str(e)
+        if "exceeds maximum available date" in error_str or "cache_end_date is None" in error_str:
+            # For cache-related errors, provide more informative message
+            if cache_end_date is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"{error_str}. Maximum available date is {cache_end_date.isoformat()}",
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Performance cache is not available",
+                )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),

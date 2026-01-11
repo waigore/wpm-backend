@@ -68,6 +68,8 @@ def create_app() -> FastAPI:
     app.state.composite_portfolio = None
     app.state.historical_portfolio = None
     app.state.price_service = None
+    app.state.performance_cache = None
+    app.state.performance_cache_end_date = None
 
     @app.on_event("startup")
     async def startup_event() -> None:

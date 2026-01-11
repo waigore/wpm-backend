@@ -2988,11 +2988,13 @@ def test_get_portfolio_performance_service(mock_composite_portfolio, mock_price_
             date=date(2024, 1, 15),
             total_market_value=25000.0,
             asset_positions={"AAPL": 17550.0, "GOOGL": 7500.0},
+            prices={"AAPL": 175.50, "GOOGL": 150.00},
         ),
         PortfolioHistoryPoint(
             date=date(2024, 1, 16),
             total_market_value=25500.0,
             asset_positions={"AAPL": 18000.0, "GOOGL": 7500.0},
+            prices={"AAPL": 180.00, "GOOGL": 150.00},
         ),
     ]
     
@@ -3011,18 +3013,20 @@ def test_get_portfolio_performance_service(mock_composite_portfolio, mock_price_
     assert hp1.date == "2024-01-15"
     assert hp1.total_market_value == 25000.0
     assert hp1.asset_positions == {"AAPL": 17550.0, "GOOGL": 7500.0}
+    assert hp1.prices == {"AAPL": 175.50, "GOOGL": 150.00}
     
     # Check second history point
     hp2 = history_points[1]
     assert hp2.date == "2024-01-16"
     assert hp2.total_market_value == 25500.0
     assert hp2.asset_positions == {"AAPL": 18000.0, "GOOGL": 7500.0}
+    assert hp2.prices == {"AAPL": 180.00, "GOOGL": 150.00}
 
 
 def test_portfolio_performance_endpoint(client_with_portfolio, test_settings):
     """Test /portfolio/all/performance endpoint."""
     from datetime import date
-    from wpm.models import PortfolioHistoryPoint
+    from wpm_backend.models.portfolio import PortfolioHistoryPoint
     
     # First, get a token
     login_response = client_with_portfolio.post(
@@ -3036,25 +3040,30 @@ def test_portfolio_performance_endpoint(client_with_portfolio, test_settings):
     mock_historical_portfolio.start_date = date(2024, 1, 1)
     client_with_portfolio.app.state.historical_portfolio = mock_historical_portfolio
     
-    # Mock get_historical_performance
-    mock_history_points = [
-        PortfolioHistoryPoint(
-            date=date(2024, 1, 15),
+    # Set up performance cache manually (startup skips cache calculation during tests)
+    cache_end_date = date(2024, 1, 16)
+    performance_cache = {
+        "2024-01-15": PortfolioHistoryPoint(
+            date="2024-01-15",
             total_market_value=25000.0,
             asset_positions={"AAPL": 17550.0, "GOOGL": 7500.0},
+            prices={"AAPL": 175.50, "GOOGL": 150.00},
         ),
-        PortfolioHistoryPoint(
-            date=date(2024, 1, 16),
+        "2024-01-16": PortfolioHistoryPoint(
+            date="2024-01-16",
             total_market_value=25500.0,
             asset_positions={"AAPL": 18000.0, "GOOGL": 7500.0},
+            prices={"AAPL": 180.00, "GOOGL": 150.00},
         ),
-    ]
+    }
+    client_with_portfolio.app.state.performance_cache = performance_cache
+    client_with_portfolio.app.state.performance_cache_end_date = cache_end_date
     
-    with patch("wpm_backend.services.portfolio_service.get_historical_performance", return_value=mock_history_points):
-        response = client_with_portfolio.get(
-            "/portfolio/all/performance?end_date=2024-01-16",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    # Call endpoint
+    response = client_with_portfolio.get(
+        "/portfolio/all/performance?end_date=2024-01-16",
+        headers={"Authorization": f"Bearer {token}"},
+    )
     
     assert response.status_code == 200
     data = response.json()
@@ -3068,6 +3077,7 @@ def test_portfolio_performance_endpoint(client_with_portfolio, test_settings):
     assert hp1["date"] == "2024-01-15"
     assert hp1["total_market_value"] == 25000.0
     assert hp1["asset_positions"] == {"AAPL": 17550.0, "GOOGL": 7500.0}
+    assert hp1["prices"] == {"AAPL": 175.50, "GOOGL": 150.00}
 
 
 def test_portfolio_performance_endpoint_no_historical_portfolio(client_with_portfolio, test_settings):
@@ -3091,4 +3101,69 @@ def test_portfolio_performance_endpoint_no_historical_portfolio(client_with_port
     assert response.status_code == 500
     assert "detail" in response.json()
     assert "Historical portfolio" in response.json()["detail"]
+
+
+def test_portfolio_response_total_count():
+    """Test PortfolioResponse.total_count computed field (deprecated model)."""
+    from wpm_backend.models.portfolio import PortfolioResponse, Position
+    
+    # Create a PortfolioResponse with positions
+    positions = [
+        Position(
+            ticker="AAPL",
+            asset_type="Stock",
+            quantity=100.0,
+            average_price=150.0,
+            cost_basis=15000.0,
+            cost_basis_method="fifo",
+        ),
+        Position(
+            ticker="GOOGL",
+            asset_type="Stock",
+            quantity=50.0,
+            average_price=100.0,
+            cost_basis=5000.0,
+            cost_basis_method="average",
+        ),
+    ]
+    
+    portfolio_response = PortfolioResponse(positions=positions)
+    assert portfolio_response.total_count == 2
+    
+    # Test with empty positions
+    empty_response = PortfolioResponse(positions=[])
+    assert empty_response.total_count == 0
+
+
+def test_parse_date_to_iso_string_custom_objects():
+    """Test _parse_date_to_iso_string helper function with custom date-like objects."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import _parse_date_to_iso_string
+    
+    # Test with ISO string (validates and returns - covers line 95-96)
+    assert _parse_date_to_iso_string("2024-01-15") == "2024-01-15"
+    
+    # Test with custom date-like object with isoformat method (covers hasattr path)
+    class CustomDateWithIsoformat:
+        def isoformat(self):
+            return "2024-01-15"
+    
+    custom_date = CustomDateWithIsoformat()
+    assert _parse_date_to_iso_string(custom_date) == "2024-01-15"
+    
+    # Test with custom date-like object with date method (covers hasattr date path)
+    class CustomDateWithDate:
+        def date(self):
+            return date(2024, 1, 15)
+    
+    custom_date2 = CustomDateWithDate()
+    assert _parse_date_to_iso_string(custom_date2) == "2024-01-15"
+    
+    # Test with custom object (last resort - converts to string, covers line 111)
+    class CustomDateStr:
+        def __str__(self):
+            return "2024-01-15"
+    
+    custom_date3 = CustomDateStr()
+    assert _parse_date_to_iso_string(custom_date3) == "2024-01-15"
 
