@@ -444,7 +444,7 @@
     "/portfolio/all/performance": {
       "get": {
         "summary": "Get Portfolio Performance Endpoint",
-        "description": "GET endpoint to retrieve historical portfolio performance data.\n\nRequires JWT authentication.\n\nArgs:\n    username: Authenticated username (from token)\n    historical_portfolio: Historical composite portfolio instance (injected via dependency)\n    cache_data: Performance cache and cache_end_date (injected via dependency)\n    end_date: Optional end date for performance tracking (ISO format YYYY-MM-DD, defaults to today)\n\nReturns:\n    PortfolioPerformanceResponse containing list of PortfolioHistoryPoint objects\n\nRaises:\n    HTTPException: 400 if date format is invalid, date range is invalid, or end_date > cache_end_date\n    HTTPException: 500 if historical portfolio or performance cache is not available",
+        "description": "GET endpoint to retrieve historical portfolio performance data.\n\nRequires JWT authentication.\n\nArgs:\n    username: Authenticated username (from token)\n    historical_portfolio: Historical composite portfolio instance (injected via dependency)\n    cache_data: Performance cache and cache_end_date (injected via dependency)\n    start_date: Optional start date for performance tracking (ISO format YYYY-MM-DD, defaults to portfolio start_date)\n    end_date: Optional end date for performance tracking (ISO format YYYY-MM-DD, defaults to today)\n    granularity: Granularity level - \"daily\" (default), \"weekly\" (Monday-based), or \"monthly\" (start of month)\n\nReturns:\n    PortfolioPerformanceResponse containing filtered list of PortfolioHistoryPoint objects\n\nRaises:\n    HTTPException: 400 if date format is invalid, date range is invalid, granularity is invalid, or end_date > cache_end_date\n    HTTPException: 422 if granularity value is invalid (handled by FastAPI Query validation)\n    HTTPException: 500 if historical portfolio or performance cache is not available",
         "operationId": "get_portfolio_performance_endpoint_portfolio_all_performance_get",
         "security": [
           {
@@ -452,6 +452,24 @@
           }
         ],
         "parameters": [
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start date for performance tracking (ISO format YYYY-MM-DD)",
+              "title": "Start Date"
+            },
+            "description": "Start date for performance tracking (ISO format YYYY-MM-DD)"
+          },
           {
             "name": "end_date",
             "in": "query",
@@ -469,6 +487,19 @@
               "title": "End Date"
             },
             "description": "End date for performance tracking (ISO format YYYY-MM-DD)"
+          },
+          {
+            "name": "granularity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(daily|weekly|monthly)$",
+              "description": "Granularity of history points: 'daily' (default), 'weekly' (Monday-based), or 'monthly' (start of month)",
+              "default": "daily",
+              "title": "Granularity"
+            },
+            "description": "Granularity of history points: 'daily' (default), 'weekly' (Monday-based), or 'monthly' (start of month)"
           }
         ],
         "responses": {

@@ -247,7 +247,7 @@ class InteractiveCLI:
         except Exception as e:
             print(f"Error: Failed to connect to API: {e}")
 
-    def performance_command(self, end_date: Optional[str] = None) -> None:
+    def performance_command(self, end_date: Optional[str] = None, granularity: Optional[str] = None) -> None:
         """Call /portfolio/all/performance endpoint and display last 10 history points."""
         if not self.token:
             print("Error: Not logged in. Please run 'login' first.")
@@ -257,10 +257,15 @@ class InteractiveCLI:
         if end_date is None:
             end_date = date.today().isoformat()
 
+        # Build query parameters
+        query_params = f"end_date={end_date}"
+        if granularity is not None:
+            query_params += f"&granularity={granularity}"
+
         # Call portfolio/all/performance endpoint with authentication
         try:
             response = self.client.get(
-                f"/portfolio/all/performance?end_date={end_date}",
+                f"/portfolio/all/performance?{query_params}",
                 headers={"Authorization": f"Bearer {self.token}"},
             )
 
@@ -343,7 +348,7 @@ class InteractiveCLI:
         print("  portfolio all   - Get all portfolio positions (requires login)")
         print("  trades <ticker> - Get all trades for an asset ticker (requires login)")
         print("  lots <ticker>   - Get all lots for an asset ticker (requires login)")
-        print("  performance [YYYY-MM-DD] - Get portfolio performance up to date (requires login, defaults to today)")
+        print("  performance [YYYY-MM-DD] [granularity] - Get portfolio performance up to date (requires login, defaults to today, optional granularity: daily/weekly/monthly)")
         print("  status          - Check application status (portfolio data, services)")
         print("  help            - Show this help message")
         print("  exit, quit      - Exit the CLI")
@@ -387,11 +392,25 @@ class InteractiveCLI:
                     else:
                         print("Error: Ticker is required. Usage: lots <ticker>")
                 elif cmd == "performance":
-                    if len(parts) > 1:
+                    if len(parts) > 2:
+                        # Both end_date and granularity provided
                         end_date = parts[1]
-                        self.performance_command(end_date)
+                        granularity = parts[2]
+                        self.performance_command(end_date, granularity)
+                    elif len(parts) > 1:
+                        # Only end_date provided (could be date or granularity)
+                        # Try to parse as date first, if it fails assume it's granularity
+                        try:
+                            # Validate it's a date by trying to parse it
+                            date.fromisoformat(parts[1])
+                            end_date = parts[1]
+                            self.performance_command(end_date)
+                        except ValueError:
+                            # Not a valid date, assume it's granularity
+                            granularity = parts[1]
+                            self.performance_command(None, granularity)
                     else:
-                        # Call without arguments to use default (today)
+                        # Call without arguments to use default (today, daily)
                         self.performance_command()
                 elif cmd == "status":
                     self.status_command()

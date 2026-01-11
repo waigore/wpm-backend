@@ -13,7 +13,7 @@ from wpm.portfolio import CompositePortfolio, get_historical_performance
 
 from wpm_backend.config import Settings
 from wpm_backend.models.portfolio import PortfolioHistoryPoint
-from wpm_backend.services.portfolio_service import _parse_date_to_iso_string
+from wpm_backend.services.portfolio_utils import parse_date_to_iso_string
 from wpm_backend.utils.openapi_generator import generate_openapi_spec
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ def _transform_history_points_to_cache(
     for wpm_history_point in wpm_history_points:
         try:
             # Extract date and convert to ISO format string
-            history_date_str = _parse_date_to_iso_string(wpm_history_point.date)
+            history_date_str = parse_date_to_iso_string(wpm_history_point.date)
             
             # Extract total_market_value
             total_market_value = float(wpm_history_point.total_market_value)

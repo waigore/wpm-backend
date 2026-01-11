@@ -9,6 +9,16 @@ from wpm.portfolio import CompositePortfolio, fetch_price_map, get_historical_pe
 from wpm.pricing import PriceService
 
 from wpm_backend.models.portfolio import Lot, MatchedSell, PortfolioHistoryPoint, Position, Trade
+from wpm_backend.services.portfolio_utils import (
+    _get_month_start_dates,
+    _get_weekly_dates,
+    determine_trade_action,
+    extract_ticker_and_asset_type_from_lot,
+    extract_ticker_and_asset_type_from_trade,
+    get_lot_date,
+    parse_date_to_date_object,
+    parse_date_to_iso_string,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,157 +51,6 @@ VALID_LOT_SORT_FIELDS = {
     "unrealized_pnl",
     "total_pnl",
 }
-
-
-def _parse_date_to_date_object(date_value) -> date:
-    """
-    Parse a date value to a date object.
-    
-    Handles date objects, datetime objects, and ISO format strings.
-    This is a helper function to work with external library types that may
-    return dates in various formats.
-    
-    Args:
-        date_value: Date value that may be a date, datetime, or ISO string
-        
-    Returns:
-        date object
-        
-    Raises:
-        ValueError: If date_value cannot be parsed to a date
-    """
-    if isinstance(date_value, date):
-        return date_value
-    if isinstance(date_value, datetime):
-        return date_value.date()
-    if isinstance(date_value, str):
-        return date.fromisoformat(date_value)
-    # Try to convert to string and parse as last resort
-    # This handles cases where external library returns custom date-like objects
-    return date.fromisoformat(str(date_value))
-
-
-def _parse_date_to_iso_string(date_value) -> str:
-    """
-    Parse a date value to an ISO format string (YYYY-MM-DD).
-    
-    Handles date objects, datetime objects, and ISO format strings.
-    This is a helper function to work with external library types that may
-    return dates in various formats.
-    
-    Args:
-        date_value: Date value that may be a date, datetime, or ISO string
-        
-    Returns:
-        ISO format date string (YYYY-MM-DD)
-    """
-    if isinstance(date_value, str):
-        # Validate it's a valid ISO format by parsing it
-        date.fromisoformat(date_value)
-        return date_value
-    if isinstance(date_value, date):
-        return date_value.isoformat()
-    if isinstance(date_value, datetime):
-        return date_value.date().isoformat()
-    # For other types, try to get isoformat method if available
-    # This handles cases where external library returns custom date-like objects
-    # NOTE: hasattr is necessary here because we're working with external library types
-    # that may return custom date-like objects without a known base class or protocol.
-    # This is a legitimate use case as the external library types are not under our control.
-    if hasattr(date_value, 'isoformat'):
-        return date_value.isoformat()
-    if hasattr(date_value, 'date'):
-        return date_value.date().isoformat()
-    # Last resort: convert to string
-    return str(date_value)
-
-
-def _determine_trade_action(wpm_trade, order_instruction: str) -> str:
-    """
-    Determine the trade action (Buy or Sell) from a wpm trade object.
-    
-    The CSV has separate "Action" (Buy/Sell) and "Order Instruction" (Limit/Market) columns.
-    This function checks for an 'action' field first, then falls back to order_instruction.
-    
-    Args:
-        wpm_trade: WPM trade object with an 'action' attribute
-        order_instruction: Order instruction string (e.g., "buy", "sell", "Limit", "Market")
-        
-    Returns:
-        Normalized action string: "Buy" or "Sell"
-    """
-    # Use action field (from CSV "Action" column: "Buy" or "Sell")
-    action = wpm_trade.action
-    if action is not None:
-        # Use action field if available (from CSV "Action" column: "Buy" or "Sell")
-        is_buy = action.lower() == "buy"
-        # Normalize action to "Buy" or "Sell" (capitalized)
-        return "Buy" if is_buy else "Sell"
-    else:
-        # Fall back to order_instruction for backward compatibility
-        # order_instruction can be "buy", "sell", "Limit", "Market", etc.
-        # If it's explicitly "sell", it's a sell; otherwise assume it's a buy
-        is_buy = order_instruction.lower() != "sell"
-        # Derive action from is_buy when action field is not available
-        return "Buy" if is_buy else "Sell"
-
-
-def _extract_ticker_and_asset_type_from_trade(wpm_trade, default_ticker: str) -> tuple[str, str]:
-    """
-    Extract ticker and asset_type from a wpm trade object.
-    
-    Args:
-        wpm_trade: WPM trade object with an asset attribute
-        default_ticker: Default ticker value to use if not found (unused, kept for compatibility)
-        
-    Returns:
-        Tuple of (ticker, asset_type) as strings
-    """
-    # Trade objects have an asset attribute (Asset dataclass)
-    wpm_asset = wpm_trade.asset
-    ticker_value = wpm_asset.ticker
-    asset_type_value = wpm_asset.asset_type
-    
-    return ticker_value, asset_type_value
-
-
-def _get_lot_date(wpm_lot) -> Optional[date]:
-    """
-    Extract date from a wpm lot object.
-    
-    Args:
-        wpm_lot: WPM lot object with purchase_date attribute
-        
-    Returns:
-        date object if found, None otherwise
-    """
-    purchase_date = wpm_lot.purchase_date
-    if purchase_date is not None:
-        try:
-            return _parse_date_to_date_object(purchase_date)
-        except Exception:
-            pass
-    
-    return None
-
-
-def _extract_ticker_and_asset_type_from_lot(wpm_lot, default_ticker: str) -> tuple[str, str]:
-    """
-    Extract ticker and asset_type from a wpm lot object.
-    
-    Args:
-        wpm_lot: WPM lot object with an asset attribute
-        default_ticker: Default ticker value to use if not found (unused, kept for compatibility)
-        
-    Returns:
-        Tuple of (ticker, asset_type) as strings
-    """
-    # Lot objects have an asset attribute (Asset dataclass)
-    wpm_asset = wpm_lot.asset
-    ticker_value = wpm_asset.ticker
-    asset_type_value = wpm_asset.asset_type
-    
-    return ticker_value, asset_type_value
 
 
 def get_all_positions(
@@ -367,7 +226,7 @@ def get_asset_trades(
     for wpm_trade in wpm_trades:
         try:
             # Parse trade date using helper function
-            trade_date = _parse_date_to_date_object(wpm_trade.date)
+            trade_date = parse_date_to_date_object(wpm_trade.date)
 
             # Apply date filtering
             if start_date is not None and trade_date < start_date:
@@ -387,10 +246,10 @@ def get_asset_trades(
     for wpm_trade in filtered_trades:
         try:
             # Extract trade date using helper function
-            trade_date_str = _parse_date_to_iso_string(wpm_trade.date)
+            trade_date_str = parse_date_to_iso_string(wpm_trade.date)
 
             # Extract ticker and asset_type using helper function
-            ticker_value, asset_type_value = _extract_ticker_and_asset_type_from_trade(wpm_trade, ticker)
+            ticker_value, asset_type_value = extract_ticker_and_asset_type_from_trade(wpm_trade, ticker)
 
             order_instruction = wpm_trade.order_instruction
             quantity = float(wpm_trade.quantity)
@@ -398,7 +257,7 @@ def get_asset_trades(
             broker = wpm_trade.broker
 
             # Determine trade action using helper function
-            action = _determine_trade_action(wpm_trade, order_instruction)
+            action = determine_trade_action(wpm_trade, order_instruction)
 
             # Create API Trade model
             api_trade = Trade(
@@ -505,7 +364,7 @@ def get_asset_lots(
     for wpm_lot in wpm_lots:
         try:
             # Get lot date using helper function
-            lot_date = _get_lot_date(wpm_lot)
+            lot_date = get_lot_date(wpm_lot)
             if lot_date is None:
                 # If no date found, skip date filtering but still include the lot
                 filtered_lots.append(wpm_lot)
@@ -529,7 +388,7 @@ def get_asset_lots(
     for wpm_lot in filtered_lots:
         try:
             # Extract lot date using helper function
-            lot_date_obj = _get_lot_date(wpm_lot)
+            lot_date_obj = get_lot_date(wpm_lot)
             if lot_date_obj is None:
                 # If no date found, skip this lot (date is required by Lot model)
                 logger.warning(f"Lot for ticker {ticker} has no date, skipping")
@@ -537,7 +396,7 @@ def get_asset_lots(
             lot_date_str = lot_date_obj.isoformat()
 
             # Extract ticker and asset_type using helper function
-            ticker_value, asset_type_value = _extract_ticker_and_asset_type_from_lot(wpm_lot, ticker)
+            ticker_value, asset_type_value = extract_ticker_and_asset_type_from_lot(wpm_lot, ticker)
 
             # Extract lot quantities and cost basis
             original_quantity = float(wpm_lot.original_quantity)
@@ -589,10 +448,10 @@ def get_asset_lots(
                         wpm_trade = wpm_matched_sell.trade
 
                     # Transform trade to API Trade model using helper function
-                    trade_date_str = _parse_date_to_iso_string(wpm_trade.date)
+                    trade_date_str = parse_date_to_iso_string(wpm_trade.date)
 
                     # Extract ticker and asset_type using helper function
-                    trade_ticker, trade_asset_type = _extract_ticker_and_asset_type_from_trade(wpm_trade, ticker_value)
+                    trade_ticker, trade_asset_type = extract_ticker_and_asset_type_from_trade(wpm_trade, ticker_value)
 
                     order_instruction = wpm_trade.order_instruction
                     trade_quantity = float(wpm_trade.quantity)
@@ -600,7 +459,7 @@ def get_asset_lots(
                     broker = wpm_trade.broker
 
                     # Determine action using helper function (should be Sell for matched sells)
-                    action = _determine_trade_action(wpm_trade, order_instruction)
+                    action = determine_trade_action(wpm_trade, order_instruction)
 
                     # Create API Trade model
                     api_trade = Trade(
@@ -762,6 +621,82 @@ def get_cached_portfolio_performance(
     return history_points
 
 
+def apply_granularity_filter(
+    history_points: List[PortfolioHistoryPoint],
+    start_date: date,
+    end_date: date,
+    granularity: str = "daily",
+) -> List[PortfolioHistoryPoint]:
+    """
+    Filter history points based on granularity parameter.
+    
+    Takes a list of all daily history points (must be sorted chronologically)
+    and filters them according to the specified granularity.
+    
+    Args:
+        history_points: List of all daily history points (must be sorted chronologically)
+        start_date: Start date of the range
+        end_date: End date of the range
+        granularity: Granularity level - "daily", "weekly", or "monthly"
+        
+    Returns:
+        Filtered list of history points based on granularity, in chronological order
+        
+    Raises:
+        ValueError: If granularity is not one of the supported values
+    """
+    logger.info(
+        f"Applying granularity filter: granularity={granularity}, "
+        f"start_date={start_date}, end_date={end_date}, "
+        f"input_points={len(history_points)}"
+    )
+    
+    # Daily granularity: return all points as-is
+    if granularity == "daily":
+        logger.info(f"Daily granularity: returning all {len(history_points)} points")
+        return history_points
+    
+    # Weekly granularity: filter to Monday dates
+    if granularity == "weekly":
+        # Get list of Monday dates in the range
+        weekly_dates = _get_weekly_dates(start_date, end_date)
+        weekly_dates_set = {d.isoformat() for d in weekly_dates}
+        
+        # Filter history points to only include Mondays
+        filtered_points = [
+            point for point in history_points
+            if point.date in weekly_dates_set
+        ]
+        
+        logger.info(
+            f"Weekly granularity: filtered from {len(history_points)} to {len(filtered_points)} points"
+        )
+        return filtered_points
+    
+    # Monthly granularity: filter to first-of-month dates
+    if granularity == "monthly":
+        # Get list of month start dates in the range
+        month_start_dates = _get_month_start_dates(start_date, end_date)
+        month_start_dates_set = {d.isoformat() for d in month_start_dates}
+        
+        # Filter history points to only include month starts
+        filtered_points = [
+            point for point in history_points
+            if point.date in month_start_dates_set
+        ]
+        
+        logger.info(
+            f"Monthly granularity: filtered from {len(history_points)} to {len(filtered_points)} points"
+        )
+        return filtered_points
+    
+    # Invalid granularity value
+    raise ValueError(
+        f"Invalid granularity: {granularity}. "
+        f"Supported values: 'daily', 'weekly', 'monthly'"
+    )
+
+
 def get_portfolio_performance(
     portfolio: CompositePortfolio,
     price_service: PriceService,
@@ -798,7 +733,7 @@ def get_portfolio_performance(
     for wpm_history_point in wpm_history_points:
         try:
             # Extract date and convert to ISO format string
-            history_date_str = _parse_date_to_iso_string(wpm_history_point.date)
+            history_date_str = parse_date_to_iso_string(wpm_history_point.date)
             
             # Extract total_market_value
             total_market_value = float(wpm_history_point.total_market_value)

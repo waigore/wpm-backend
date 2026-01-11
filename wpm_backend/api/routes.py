@@ -15,7 +15,7 @@ from wpm_backend.auth.auth import authenticate_user, create_access_token, verify
 from wpm_backend.config import Settings, get_settings
 from wpm_backend.models.auth import LoginRequest, LoginResponse
 from wpm_backend.models.portfolio import PortfolioHistoryPoint, PortfolioPerformanceResponse, Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesResponse
-from wpm_backend.services.portfolio_service import get_all_positions, get_asset_lots, get_asset_trades, get_cached_portfolio_performance, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
+from wpm_backend.services.portfolio_service import apply_granularity_filter, get_all_positions, get_asset_lots, get_asset_trades, get_cached_portfolio_performance, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -524,7 +524,9 @@ def get_portfolio_performance_endpoint(
     username: str = Depends(get_current_user),
     historical_portfolio: CompositePortfolio = Depends(get_historical_portfolio),
     cache_data: tuple[dict[str, PortfolioHistoryPoint], Optional[date]] = Depends(get_performance_cache),
+    start_date: Optional[str] = Query(None, description="Start date for performance tracking (ISO format YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date for performance tracking (ISO format YYYY-MM-DD)"),
+    granularity: str = Query("daily", pattern="^(daily|weekly|monthly)$", description="Granularity of history points: 'daily' (default), 'weekly' (Monday-based), or 'monthly' (start of month)"),
 ) -> PortfolioPerformanceResponse:
     """
     GET endpoint to retrieve historical portfolio performance data.
@@ -535,17 +537,20 @@ def get_portfolio_performance_endpoint(
         username: Authenticated username (from token)
         historical_portfolio: Historical composite portfolio instance (injected via dependency)
         cache_data: Performance cache and cache_end_date (injected via dependency)
+        start_date: Optional start date for performance tracking (ISO format YYYY-MM-DD, defaults to portfolio start_date)
         end_date: Optional end date for performance tracking (ISO format YYYY-MM-DD, defaults to today)
+        granularity: Granularity level - "daily" (default), "weekly" (Monday-based), or "monthly" (start of month)
 
     Returns:
-        PortfolioPerformanceResponse containing list of PortfolioHistoryPoint objects
+        PortfolioPerformanceResponse containing filtered list of PortfolioHistoryPoint objects
 
     Raises:
-        HTTPException: 400 if date format is invalid, date range is invalid, or end_date > cache_end_date
+        HTTPException: 400 if date format is invalid, date range is invalid, granularity is invalid, or end_date > cache_end_date
+        HTTPException: 422 if granularity value is invalid (handled by FastAPI Query validation)
         HTTPException: 500 if historical portfolio or performance cache is not available
     """
     logger.info(
-        f"Portfolio performance request received from user: {username}, end_date={end_date}"
+        f"Portfolio performance request received from user: {username}, start_date={start_date}, end_date={end_date}, granularity={granularity}"
     )
     
     # Unpack cache data
@@ -559,14 +564,20 @@ def get_portfolio_performance_endpoint(
             detail="Performance cache is empty",
         )
     
-    # Get start_date from portfolio
-    start_date_obj = historical_portfolio.start_date
-    if start_date_obj is None:
+    # Get portfolio start_date
+    portfolio_start_date = historical_portfolio.start_date
+    if portfolio_start_date is None:
         logger.warning("Portfolio has no start_date, cannot retrieve performance data")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Portfolio has no start date (no trades found)",
         )
+    
+    # Parse start_date if provided, otherwise use portfolio start_date
+    if start_date is not None:
+        start_date_obj = _parse_date_string(start_date, "start_date")
+    else:
+        start_date_obj = portfolio_start_date
     
     # Parse end_date if provided, default to today if not provided
     if end_date is not None:
@@ -574,7 +585,13 @@ def get_portfolio_performance_endpoint(
     else:
         end_date_obj = date.today()
     
-    # Validate date range
+    # Clamp dates to portfolio start_date if they are before it (no error thrown)
+    if start_date_obj < portfolio_start_date:
+        start_date_obj = portfolio_start_date
+    if end_date_obj < portfolio_start_date:
+        end_date_obj = portfolio_start_date
+    
+    # Validate date range (after clamping)
     if end_date_obj < start_date_obj:
         logger.warning(f"Invalid date range: end_date={end_date_obj} < start_date={start_date_obj}")
         raise HTTPException(
@@ -583,7 +600,7 @@ def get_portfolio_performance_endpoint(
         )
     
     try:
-        # Get portfolio performance from cache
+        # Get portfolio performance from cache (all daily points)
         history_points = get_cached_portfolio_performance(
             cache,
             cache_end_date,
@@ -591,17 +608,32 @@ def get_portfolio_performance_endpoint(
             end_date_obj,
         )
         
-        logger.info(
-            f"Portfolio performance response sent to user: {username}, "
-            f"history_points_count={len(history_points)}, start_date={start_date_obj}, end_date={end_date_obj}"
+        # Apply granularity filter
+        filtered_points = apply_granularity_filter(
+            history_points,
+            start_date_obj,
+            end_date_obj,
+            granularity,
         )
         
-        return PortfolioPerformanceResponse(history_points=history_points)
+        logger.info(
+            f"Portfolio performance response sent to user: {username}, "
+            f"granularity={granularity}, history_points_count={len(filtered_points)}, "
+            f"start_date={start_date_obj}, end_date={end_date_obj}"
+        )
+        
+        return PortfolioPerformanceResponse(history_points=filtered_points)
     except ValueError as e:
-        # Handle invalid date range or cache-related errors
+        # Handle invalid date range, cache-related errors, or invalid granularity
         logger.warning(f"Error retrieving portfolio performance: {e}")
-        # Check if error indicates end_date > cache_end_date
         error_str = str(e)
+        # Check if error is due to invalid granularity
+        if "Invalid granularity" in error_str:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+        # Check if error indicates end_date > cache_end_date
         if "exceeds maximum available date" in error_str or "cache_end_date is None" in error_str:
             # For cache-related errors, provide more informative message
             if cache_end_date is not None:
