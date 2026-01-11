@@ -440,6 +440,60 @@
           }
         }
       }
+    },
+    "/portfolio/all/performance": {
+      "get": {
+        "summary": "Get Portfolio Performance Endpoint",
+        "description": "GET endpoint to retrieve historical portfolio performance data.\n\nRequires JWT authentication.\n\nArgs:\n    username: Authenticated username (from token)\n    historical_portfolio: Historical composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n    end_date: Optional end date for performance tracking (ISO format YYYY-MM-DD, defaults to today)\n\nReturns:\n    PortfolioPerformanceResponse containing list of PortfolioHistoryPoint objects\n\nRaises:\n    HTTPException: 400 if date format is invalid or date range is invalid\n    HTTPException: 500 if historical portfolio is not available",
+        "operationId": "get_portfolio_performance_endpoint_portfolio_all_performance_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End date for performance tracking (ISO format YYYY-MM-DD)",
+              "title": "End Date"
+            },
+            "description": "End date for performance tracking (ISO format YYYY-MM-DD)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioPerformanceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -812,6 +866,55 @@
         ],
         "title": "PortfolioAssetTradesResponse",
         "description": "Response model for /portfolio/trades/<ticker> endpoint with paginated trades."
+      },
+      "PortfolioHistoryPoint": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "description": "Date of the history point (ISO format YYYY-MM-DD)"
+          },
+          "total_market_value": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Total Market Value",
+            "description": "Total market value of the portfolio on this date in USD"
+          },
+          "asset_positions": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Asset Positions",
+            "description": "Dictionary mapping ticker symbols to position values (quantity * price) on this date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "total_market_value",
+          "asset_positions"
+        ],
+        "title": "PortfolioHistoryPoint",
+        "description": "Model representing a single portfolio history point."
+      },
+      "PortfolioPerformanceResponse": {
+        "properties": {
+          "history_points": {
+            "items": {
+              "$ref": "#/components/schemas/PortfolioHistoryPoint"
+            },
+            "type": "array",
+            "title": "History Points",
+            "description": "List of portfolio history points, one for each day from start_date to end_date (inclusive)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "history_points"
+        ],
+        "title": "PortfolioPerformanceResponse",
+        "description": "Response model for /portfolio/all/performance endpoint with historical performance data."
       },
       "Position": {
         "properties": {

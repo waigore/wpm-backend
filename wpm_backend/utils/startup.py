@@ -48,6 +48,15 @@ async def run_startup_logic(app: FastAPI, settings: Settings) -> None:
             f"Successfully imported CSV files. Composite portfolio created with "
             f"{len(composite_portfolio.get_positions())} positions"
         )
+        
+        # Create cloned historical portfolio for performance endpoint
+        try:
+            historical_portfolio = composite_portfolio.clone()
+            app.state.historical_portfolio = historical_portfolio
+            logger.info("Cloned historical portfolio created and stored in app state")
+        except Exception as e:
+            logger.error(f"Failed to create cloned historical portfolio: {e}", exc_info=True)
+            # Continue startup even if clone fails - performance endpoint won't work
     except Exception as e:
         logger.error(f"Failed to import CSV files: {e}", exc_info=True)
         # Continue startup even if import fails - app can still run

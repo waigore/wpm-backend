@@ -246,6 +246,61 @@ class InteractiveCLI:
         except Exception as e:
             print(f"Error: Failed to connect to API: {e}")
 
+    def performance_command(self, end_date: str) -> None:
+        """Call /portfolio/all/performance endpoint and display last 10 history points."""
+        if not self.token:
+            print("Error: Not logged in. Please run 'login' first.")
+            return
+
+        # Call portfolio/all/performance endpoint with authentication
+        try:
+            response = self.client.get(
+                f"/portfolio/all/performance?end_date={end_date}",
+                headers={"Authorization": f"Bearer {self.token}"},
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Extract history points
+                history_points = data.get("history_points", [])
+                
+                # Display last 10 points only
+                last_10_points = history_points[-10:] if len(history_points) > 10 else history_points
+                
+                print("\nPORTFOLIO PERFORMANCE (Last 10 Points)")
+                print("-" * 60)
+                print(json.dumps(last_10_points, indent=2))
+                
+                if len(history_points) > 10:
+                    print(f"\nNote: Showing last 10 of {len(history_points)} total history points")
+            elif response.status_code == 401:
+                print("Error: Authentication failed. Token may be expired. Please run 'login' again.")
+                self.token = None  # Clear invalid token
+            elif response.status_code == 400:
+                print("Error: Invalid request parameters.")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+            elif response.status_code == 500:
+                print("Error: Server error. Historical portfolio data may not be available.")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+            else:
+                print(f"Error: Request failed with status code {response.status_code}")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+        except Exception as e:
+            print(f"Error: Failed to connect to API: {e}")
+
     def status_command(self) -> None:
         """Check the status of portfolio data and services."""
         print("\nApplication Status:")
@@ -283,6 +338,7 @@ class InteractiveCLI:
         print("  portfolio all   - Get all portfolio positions (requires login)")
         print("  trades <ticker> - Get all trades for an asset ticker (requires login)")
         print("  lots <ticker>   - Get all lots for an asset ticker (requires login)")
+        print("  performance YYYY-MM-DD - Get portfolio performance up to date (requires login)")
         print("  status          - Check application status (portfolio data, services)")
         print("  help            - Show this help message")
         print("  exit, quit      - Exit the CLI")
@@ -325,6 +381,12 @@ class InteractiveCLI:
                         self.lots_command(ticker)
                     else:
                         print("Error: Ticker is required. Usage: lots <ticker>")
+                elif cmd == "performance":
+                    if len(parts) > 1:
+                        end_date = parts[1]
+                        self.performance_command(end_date)
+                    else:
+                        print("Error: End date is required. Usage: performance YYYY-MM-DD")
                 elif cmd == "status":
                     self.status_command()
                 else:

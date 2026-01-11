@@ -14,8 +14,8 @@ from wpm.pricing import PriceService
 from wpm_backend.auth.auth import authenticate_user, create_access_token, verify_token
 from wpm_backend.config import Settings, get_settings
 from wpm_backend.models.auth import LoginRequest, LoginResponse
-from wpm_backend.models.portfolio import Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesResponse
-from wpm_backend.services.portfolio_service import get_all_positions, get_asset_lots, get_asset_trades, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
+from wpm_backend.models.portfolio import PortfolioHistoryPoint, PortfolioPerformanceResponse, Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesResponse
+from wpm_backend.services.portfolio_service import get_all_positions, get_asset_lots, get_asset_trades, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -469,5 +469,110 @@ def get_asset_lots_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error while retrieving lots for ticker {ticker}",
+        )
+
+
+def get_historical_portfolio(request: Request) -> CompositePortfolio:
+    """
+    Dependency function to get historical portfolio from app state.
+
+    Args:
+        request: FastAPI Request object to access app.state
+
+    Returns:
+        Historical CompositePortfolio instance from app state
+
+    Raises:
+        HTTPException: 500 if historical portfolio is not available
+    """
+    portfolio = getattr(request.app.state, "historical_portfolio", None)
+    if portfolio is None:
+        logger.error("Historical portfolio not available in application state")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Historical portfolio data not available",
+        )
+    return portfolio
+
+
+@router.get("/portfolio/all/performance", response_model=PortfolioPerformanceResponse)
+def get_portfolio_performance_endpoint(
+    username: str = Depends(get_current_user),
+    historical_portfolio: CompositePortfolio = Depends(get_historical_portfolio),
+    price_service: PriceService = Depends(get_price_service),
+    end_date: Optional[str] = Query(None, description="End date for performance tracking (ISO format YYYY-MM-DD)"),
+) -> PortfolioPerformanceResponse:
+    """
+    GET endpoint to retrieve historical portfolio performance data.
+
+    Requires JWT authentication.
+
+    Args:
+        username: Authenticated username (from token)
+        historical_portfolio: Historical composite portfolio instance (injected via dependency)
+        price_service: Price service instance (injected via dependency)
+        end_date: Optional end date for performance tracking (ISO format YYYY-MM-DD, defaults to today)
+
+    Returns:
+        PortfolioPerformanceResponse containing list of PortfolioHistoryPoint objects
+
+    Raises:
+        HTTPException: 400 if date format is invalid or date range is invalid
+        HTTPException: 500 if historical portfolio is not available
+    """
+    logger.info(
+        f"Portfolio performance request received from user: {username}, end_date={end_date}"
+    )
+    
+    # Get start_date from portfolio
+    start_date_obj = historical_portfolio.start_date
+    if start_date_obj is None:
+        logger.warning("Portfolio has no start_date, cannot retrieve performance data")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Portfolio has no start date (no trades found)",
+        )
+    
+    # Parse end_date if provided, default to today if not provided
+    if end_date is not None:
+        end_date_obj = _parse_date_string(end_date, "end_date")
+    else:
+        end_date_obj = date.today()
+    
+    # Validate date range
+    if end_date_obj < start_date_obj:
+        logger.warning(f"Invalid date range: end_date={end_date_obj} < start_date={start_date_obj}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"end_date ({end_date_obj}) must be greater than or equal to start_date ({start_date_obj})",
+        )
+    
+    try:
+        # Get portfolio performance
+        history_points = get_portfolio_performance(
+            historical_portfolio,
+            price_service,
+            start_date_obj,
+            end_date_obj,
+        )
+        
+        logger.info(
+            f"Portfolio performance response sent to user: {username}, "
+            f"history_points_count={len(history_points)}, start_date={start_date_obj}, end_date={end_date_obj}"
+        )
+        
+        return PortfolioPerformanceResponse(history_points=history_points)
+    except ValueError as e:
+        # Handle invalid date range or other value errors
+        logger.warning(f"Error retrieving portfolio performance: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving portfolio performance: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error while retrieving portfolio performance",
         )
 

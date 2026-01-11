@@ -5,10 +5,10 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from wpm.models import Asset, Position as WPMPosition, Trade as WPMTrade
-from wpm.portfolio import CompositePortfolio, fetch_price_map
+from wpm.portfolio import CompositePortfolio, fetch_price_map, get_historical_performance
 from wpm.pricing import PriceService
 
-from wpm_backend.models.portfolio import Lot, MatchedSell, Position, Trade
+from wpm_backend.models.portfolio import Lot, MatchedSell, PortfolioHistoryPoint, Position, Trade
 
 logger = logging.getLogger(__name__)
 
@@ -703,3 +703,61 @@ def get_asset_lots(
     logger.info(f"Sorted {len(sorted_lots)} lots by {sort_by} ({sort_order})")
     return sorted_lots
 
+
+def get_portfolio_performance(
+    portfolio: CompositePortfolio,
+    price_service: PriceService,
+    start_date: date,
+    end_date: date,
+) -> List[PortfolioHistoryPoint]:
+    """
+    Retrieve historical performance data from the wpm historical portfolio and transform to API models.
+
+    Args:
+        portfolio: Historical CompositePortfolio instance from wpm library
+        price_service: PriceService instance for fetching historical prices
+        start_date: Start date for performance tracking (inclusive)
+        end_date: End date for performance tracking (inclusive)
+
+    Returns:
+        List of PortfolioHistoryPoint API models, one for each day from start_date to end_date
+
+    Raises:
+        ValueError: If date range is invalid or historical prices cannot be retrieved
+    """
+    logger.info(f"Retrieving portfolio performance from {start_date} to {end_date}")
+    
+    try:
+        # Call wpm library function to get historical performance
+        wpm_history_points = get_historical_performance(portfolio, price_service, start_date, end_date)
+        logger.info(f"Retrieved {len(wpm_history_points)} history points from wpm library")
+    except Exception as e:
+        logger.error(f"Error retrieving historical performance: {e}", exc_info=True)
+        raise ValueError(f"Failed to retrieve historical performance: {e}")
+    
+    # Transform wpm PortfolioHistoryPoint objects to API models
+    api_history_points = []
+    for wpm_history_point in wpm_history_points:
+        try:
+            # Extract date and convert to ISO format string
+            history_date_str = _parse_date_to_iso_string(wpm_history_point.date)
+            
+            # Extract total_market_value
+            total_market_value = float(wpm_history_point.total_market_value)
+            
+            # Extract asset_positions (already Dict[str, float])
+            asset_positions = wpm_history_point.asset_positions
+            
+            # Create API PortfolioHistoryPoint model
+            api_history_point = PortfolioHistoryPoint(
+                date=history_date_str,
+                total_market_value=total_market_value,
+                asset_positions=asset_positions,
+            )
+            api_history_points.append(api_history_point)
+        except Exception as e:
+            logger.error(f"Error transforming history point: {e}", exc_info=True)
+            continue
+    
+    logger.info(f"Transformed {len(api_history_points)} history points to API models")
+    return api_history_points

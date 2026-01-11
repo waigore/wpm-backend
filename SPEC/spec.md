@@ -51,10 +51,11 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 
 **Key Functions**:
 - `create_app() -> FastAPI`: Factory function that creates and configures the FastAPI application instance
-- `startup_event()`: Async event handler invoked on application startup; calls `wpm.importer.import_csv_files(import_dir: Path)` to import all available trade CSVs from the import directory. Stores the returned `CompositePortfolio` instance in application state (e.g., `app.state.composite_portfolio`) for use by portfolio endpoints. Logs import process at INFO level.
+- `startup_event()`: Async event handler invoked on application startup; calls `wpm_backend.utils.startup.run_startup_logic(app, settings)` to execute startup logic including CSV import, historical portfolio cloning, and OpenAPI specification generation.
 
 **Key Variables**:
 - `app.state.composite_portfolio`: Stores the CompositePortfolio instance created during startup for access by portfolio endpoints
+- `app.state.historical_portfolio`: Stores the cloned historical CompositePortfolio instance created during startup for use by performance endpoint
 
 **Artifacts**: None
 
@@ -114,6 +115,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `get_all_positions_endpoint(...) -> PortfolioAllResponse`: GET endpoint at `/portfolio/all` that requires JWT authentication. Supports pagination and sorting via query parameters: `page` (default: 1), `size` (default: 20, max: 100), `sort_by` (default: "ticker"), and `sort_order` (default: "asc"). Verifies token via auth module, retrieves CompositePortfolio from application state, creates PriceService instance, calls portfolio_service.get_all_positions() with sorting parameters to fetch and transform positions, applies pagination using fastapi-pagination, retrieves portfolio totals using composite_portfolio.get_total_cost_basis(), get_total_market_value(), and get_total_unrealized_pnl(), then returns PortfolioAllResponse containing paginated positions and portfolio totals. Validates sort_by against allowed Position fields and returns 400 Bad Request for invalid fields. Logs request/response at INFO level.
 - `get_asset_trades_endpoint(ticker: str, ...) -> PortfolioAssetTradesResponse`: GET endpoint at `/portfolio/trades/{ticker}` that requires JWT authentication. Supports pagination, date filtering, and sorting via query parameters: `page` (default: 1), `size` (default: 20, max: 100), `start_date` (optional, ISO format YYYY-MM-DD), `end_date` (optional, ISO format YYYY-MM-DD), `sort_by` (default: "date"), and `sort_order` (default: "asc"). Verifies token via auth module, retrieves CompositePortfolio from application state, calls portfolio_service.get_asset_trades() with ticker, date filtering, and sorting parameters to fetch and transform trades, applies pagination using fastapi-pagination, then returns PortfolioAssetTradesResponse containing paginated trades. Validates date formats and date range (start_date <= end_date), validates sort_by against allowed Trade fields, returns 400 Bad Request for invalid dates or sort_by field, 404 Not Found if ticker doesn't exist. Logs request/response at INFO level.
 - `get_asset_lots_endpoint(ticker: str, ...) -> PortfolioAssetLotsResponse`: GET endpoint at `/portfolio/lots/{ticker}` that requires JWT authentication. Supports pagination, date filtering, and sorting via query parameters: `page` (default: 1), `size` (default: 20, max: 100), `start_date` (optional, ISO format YYYY-MM-DD), `end_date` (optional, ISO format YYYY-MM-DD), `sort_by` (default: "date"), and `sort_order` (default: "asc"). Verifies token via auth module, retrieves CompositePortfolio and PriceService from application state, calls portfolio_service.get_asset_lots() with ticker, price_service, date filtering, and sorting parameters to fetch and transform lots, applies pagination using fastapi-pagination, then returns PortfolioAssetLotsResponse containing paginated lots. Validates date formats and date range (start_date <= end_date), validates sort_by against allowed Lot fields (date, original_quantity, remaining_quantity, cost_basis, broker, realized_pnl, unrealized_pnl, total_pnl), returns 400 Bad Request for invalid dates or sort_by field, 404 Not Found if ticker doesn't exist. Logs request/response at INFO level.
+- `get_portfolio_performance_endpoint(...) -> PortfolioPerformanceResponse`: GET endpoint at `/portfolio/all/performance` that requires JWT authentication. Supports optional date filtering via query parameter: `end_date` (optional, ISO format YYYY-MM-DD). Verifies token via auth module, retrieves historical CompositePortfolio from application state (created via cloning at startup), retrieves PriceService from application state, uses portfolio's start_date property to determine start_date, parses end_date if provided (defaults to today if not provided), validates date range, calls portfolio_service.get_portfolio_performance() with historical portfolio, price_service, start_date, and end_date to fetch and transform history points, then returns PortfolioPerformanceResponse containing list of PortfolioHistoryPoint objects. Returns 400 Bad Request for invalid date format, 500 Internal Server Error if historical portfolio is not available. Logs request/response at INFO level.
 - `get_current_user(token: str = Depends(oauth2_scheme), settings: Settings = Depends(get_settings)) -> str`: Dependency function that extracts JWT token from Authorization header using OAuth2PasswordBearer, verifies it via auth module, and returns username. Raises HTTPException with 401 status if token is invalid or expired. Used to protect endpoints requiring authentication.
 
 **Artifacts**: None
@@ -132,6 +134,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `get_all_positions(composite: CompositePortfolio, price_service: PriceService, sort_by: Optional[str] = None, sort_order: Optional[str] = "asc") -> List[Position]`: Retrieves all positions from the wpm composite portfolio using `composite.get_positions()` which returns `Dict[Asset, Position]`. Fetches current prices using `wpm.portfolio.fetch_price_map(composite, price_service)` which returns `Dict[Asset, Optional[float]]`. Transforms wpm Position objects (containing Asset, Decimal quantity, cost_basis, cost_basis_method) into API Position models. Calculates market_value and unrealized_gain_loss when prices are available. Applies sorting based on `sort_by` and `sort_order` parameters. Validates `sort_by` against Position model fields. Handles None values for optional fields (current_price, market_value, unrealized_gain_loss) by treating None as smallest value. Defaults to ticker ascending if no sort parameters provided. Logs function entry/exit and wpm library calls at INFO level. Returns sorted list of API Position objects.
 - `get_asset_trades(composite: CompositePortfolio, ticker: str, start_date: Optional[date] = None, end_date: Optional[date] = None, sort_by: Optional[str] = None, sort_order: Optional[str] = "asc") -> List[Trade]`: Retrieves all trades for a specific asset ticker from the wpm composite portfolio using `composite.get_asset_trades(ticker)` which returns a list of Trade objects. Filters trades by date range if `start_date` and/or `end_date` are provided (inclusive boundaries). Determines if a trade is a buy by checking the `action` field (from CSV "Action" column: "Buy" or "Sell"), with fallback to `order_instruction` field for backward compatibility. Transforms wpm Trade objects into API Trade models, extracting the broker field from the wpm Trade object. Applies sorting based on `sort_by` and `sort_order` parameters. Validates `sort_by` against Trade model fields. Defaults to date ascending if no sort parameters provided. Logs function entry/exit, date filtering, and sorting at INFO level. Returns sorted list of API Trade objects filtered by date range.
 - `get_asset_lots(composite: CompositePortfolio, ticker: str, price_service: PriceService, start_date: Optional[date] = None, end_date: Optional[date] = None, sort_by: Optional[str] = None, sort_order: Optional[str] = "asc") -> List[Lot]`: Retrieves all lots for a specific asset ticker from the wpm composite portfolio using `composite.get_asset_lots(ticker)` which returns a list of Lot objects. Filters lots by date range if `start_date` and/or `end_date` are provided (inclusive boundaries). Fetches current prices using `fetch_price_map(composite, price_service)` for unrealized_pnl and total_pnl calculations. Transforms wpm Lot objects into API Lot models, including transforming matched sells (which contain Trade objects and consumed_quantity) into MatchedSell API models. Extracts broker field from `wpm_lot.broker`. Calls `lot.get_realized_pnl()` to get realized P&L (no parameters). For each lot, gets current_price from price_map using lot's asset. Calls `lot.get_unrealized_pnl(current_price)` with current_price (None if price unavailable). Calls `lot.get_total_pnl(current_price)` with current_price (None if price unavailable). Applies sorting based on `sort_by` and `sort_order` parameters. Validates `sort_by` against Lot model fields (date, original_quantity, remaining_quantity, cost_basis, broker, realized_pnl, unrealized_pnl, total_pnl). Defaults to date ascending if no sort parameters provided. Logs function entry/exit, date filtering, and sorting at INFO level. Returns sorted list of API Lot objects filtered by date range.
+- `get_portfolio_performance(portfolio: CompositePortfolio, price_service: PriceService, start_date: date, end_date: date) -> List[PortfolioHistoryPoint]`: Retrieves historical performance data from the wpm historical portfolio using `wpm.portfolio.get_historical_performance(portfolio, price_service, start_date, end_date)` which returns a list of PortfolioHistoryPoint objects. Transforms wpm PortfolioHistoryPoint objects (containing date, total_market_value, asset_positions) into API PortfolioHistoryPoint models. Extracts date and converts to ISO format string (YYYY-MM-DD), extracts total_market_value as float, extracts asset_positions as Dict[str, float] mapping ticker to position value. Logs function entry/exit and wpm library calls at INFO level. Returns list of API PortfolioHistoryPoint objects.
 
 **Artifacts**: None
 
@@ -180,6 +183,10 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
   - `trades`: Page[Trade] (required)
 - `PortfolioAssetLotsResponse`: Response model for `/portfolio/lots/<ticker>` endpoint
   - `lots`: Page[Lot] (required)
+- `PortfolioHistoryPoint`: Model representing a single portfolio history point
+  - Fields defined in Data Models section below
+- `PortfolioPerformanceResponse`: Response model for `/portfolio/all/performance` endpoint
+  - `history_points`: List[PortfolioHistoryPoint] (required)
 - `PortfolioResponse`: Response model for portfolio endpoints (deprecated)
   - `positions`: List[Position] (required)
   - `total_count`: int (calculated, number of positions)
@@ -200,6 +207,20 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 
 **Artifacts**: 
 - `logs/app.log`: Main application log file (gitignored)
+
+### wpm_backend/utils/startup.py
+**Location**: `wpm_backend/utils/startup.py`
+
+**Responsibilities**:
+- Execute application startup logic
+- Import CSV files and create composite portfolio
+- Create and store cloned historical portfolio for performance endpoint
+- Generate OpenAPI specification
+
+**Key Functions**:
+- `run_startup_logic(app: FastAPI, settings: Settings) -> None`: Executes application startup logic. Creates PriceService instance and stores it in `app.state.price_service`. Imports CSV files using `wpm.importer.import_csv_files(import_dir)` and stores the returned CompositePortfolio in `app.state.composite_portfolio`. Creates a cloned historical portfolio using `composite_portfolio.clone()` (with no date filters to preserve full history) and stores it in `app.state.historical_portfolio` for use by the performance endpoint. The cloned portfolio is reused for all subsequent performance API calls. Generates OpenAPI specification using `generate_openapi_spec(app)`. Logs all operations at INFO level.
+
+**Artifacts**: None
 
 ### wpm_backend/utils/openapi_generator.py
 **Location**: `wpm_backend/utils/openapi_generator.py`
@@ -234,8 +255,9 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `InteractiveCLI.portfolio_all_command() -> None`: Calls GET `/portfolio/all` endpoint via TestClient with stored JWT token in Authorization header. Displays the response in formatted JSON using `json.dumps()` with `indent=2`. Handles authentication errors by prompting user to login if token is missing or expired.
 - `InteractiveCLI.trades_command(ticker: str) -> None`: Calls GET `/portfolio/trades/{ticker}` endpoint via TestClient with stored JWT token in Authorization header. Displays the response (paginated trades) in formatted JSON using `json.dumps()` with `indent=2`. Handles authentication errors (401), not found errors (404), validation errors (400), and server errors (500) with user-friendly error messages.
 - `InteractiveCLI.lots_command(ticker: str) -> None`: Calls GET `/portfolio/lots/{ticker}` endpoint via TestClient with stored JWT token in Authorization header. Displays the response (paginated lots) in formatted JSON using `json.dumps()` with `indent=2`. Handles authentication errors (401), not found errors (404), validation errors (400), and server errors (500) with user-friendly error messages.
+- `InteractiveCLI.performance_command(end_date: str) -> None`: Calls GET `/portfolio/all/performance?end_date={end_date}` endpoint via TestClient with stored JWT token in Authorization header. Extracts history_points from response, displays only the last 10 history points in formatted JSON using `json.dumps()` with `indent=2`. Handles authentication errors (401), validation errors (400), and server errors (500) with user-friendly error messages.
 - `InteractiveCLI.run() -> None`: Main interactive loop that prompts for commands, parses input, routes to appropriate command handlers, and continues until user enters `exit` or `quit`.
-- `InteractiveCLI.show_help() -> None`: Displays list of available commands and their descriptions, including the `trades <ticker>` and `lots <ticker>` commands.
+- `InteractiveCLI.show_help() -> None`: Displays list of available commands and their descriptions, including the `trades <ticker>`, `lots <ticker>`, and `performance YYYY-MM-DD` commands.
 
 **Key Variables**:
 - `InteractiveCLI.client`: TestClient instance for making API requests
@@ -246,6 +268,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `portfolio all`: Retrieves all portfolio positions via `/portfolio/all` endpoint, displays formatted JSON
 - `trades <ticker>`: Retrieves all trades for the specified asset ticker via `/portfolio/trades/{ticker}` endpoint, displays formatted JSON
 - `lots <ticker>`: Retrieves all lots for the specified asset ticker via `/portfolio/lots/{ticker}` endpoint, displays formatted JSON
+- `performance YYYY-MM-DD`: Retrieves historical performance data via `/portfolio/all/performance?end_date=YYYY-MM-DD` endpoint, displays last 10 history points in formatted JSON
 - `help`: Lists available commands and their descriptions
 - `exit`/`quit`: Terminates the interactive session
 
@@ -572,6 +595,44 @@ Response model for the `/portfolio/lots/<ticker>` endpoint. Contains paginated l
 
 **Note**: The lots are filtered by the provided date range (if specified) and paginated according to the page and size parameters.
 
+### PortfolioHistoryPoint
+**Location**: `wpm_backend/models/portfolio.py`
+
+Model representing a single portfolio history point (snapshot of portfolio state at a specific date). This model is based on the wpm library's `PortfolioHistoryPoint` class.
+
+**Fields**:
+- `date` (str, required)
+  - Description: Date of the history point in ISO format (YYYY-MM-DD)
+  - Source: `history_point.date` from wpm PortfolioHistoryPoint object
+  - Validation: ISO date string format
+  - Example: "2024-01-15"
+  
+- `total_market_value` (float, required)
+  - Description: Total market value of the portfolio on this date in USD
+  - Source: `history_point.total_market_value` from wpm PortfolioHistoryPoint object
+  - Validation: Non-negative float, ge=0
+  - Example: 25000.0
+  
+- `asset_positions` (Dict[str, float], required)
+  - Description: Dictionary mapping ticker symbols to position values (quantity * price) on this date
+  - Source: `history_point.asset_positions` from wpm PortfolioHistoryPoint object
+  - Validation: Dictionary with string keys (ticker) and float values (position value)
+  - Example: {"AAPL": 17550.0, "GOOGL": 7500.0}
+
+### PortfolioPerformanceResponse
+**Location**: `wpm_backend/models/portfolio.py`
+
+Response model for the `/portfolio/all/performance` endpoint. Contains a list of portfolio history points representing day-to-day historical performance.
+
+**Fields**:
+- `history_points` (List[PortfolioHistoryPoint], required)
+  - Description: List of portfolio history points, one for each day from start_date to end_date (inclusive)
+  - Contains: PortfolioHistoryPoint objects ordered chronologically by date
+  - Validation: List of valid PortfolioHistoryPoint objects
+  - Example: [PortfolioHistoryPoint(date="2024-01-15", total_market_value=25000.0, asset_positions={...}), ...]
+
+**Note**: The history points are not paginated or sorted - all points are returned as the frontend is expected to utilize all points. Points are ordered chronologically from start_date to end_date.
+
 ### Page[Lot]
 **Location**: `fastapi_pagination.Page`
 
@@ -707,6 +768,10 @@ Paginated response structure used within PortfolioAllResponse. Uses fastapi-pagi
   - `wpm.models.Position`: Position model with asset (Asset), quantity (Decimal), cost_basis (float), cost_basis_method (str)
   - `wpm.models.Trade`: Trade model with date, asset (Asset), order_instruction (str), quantity (Decimal), price (float)
   - `wpm.models.Asset`: Asset model with ticker (str) and asset_type (str)
+  - `wpm.portfolio.get_historical_performance(portfolio: Portfolio, price_service: PriceService, start_date: date, end_date: date) -> List[PortfolioHistoryPoint]`: Function to retrieve historical performance data from a portfolio
+  - `wpm.models.PortfolioHistoryPoint`: Portfolio history point model with date (date), total_market_value (float), asset_positions (Dict[str, float])
+  - `Portfolio.clone() -> Portfolio`: Method to create a deep copy (clone) of a portfolio
+  - `Portfolio.start_date`: Property returning the earliest start_date (Optional[date])
 
 ### Development Dependencies
 - **pytest** (>=7.4.0): Testing framework for writing and running tests

@@ -118,6 +118,7 @@ def client(app):
 def client_with_portfolio(app, mock_composite_portfolio, mock_price_service):
     """TestClient with mock portfolio and price service in app state."""
     app.state.composite_portfolio = mock_composite_portfolio
+    app.state.historical_portfolio = mock_composite_portfolio  # Use same mock for historical portfolio in tests
     app.state.price_service = mock_price_service
     return TestClient(app)
 

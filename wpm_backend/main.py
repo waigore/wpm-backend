@@ -66,6 +66,7 @@ def create_app() -> FastAPI:
 
     # Initialize app state variables (will be populated in startup)
     app.state.composite_portfolio = None
+    app.state.historical_portfolio = None
     app.state.price_service = None
 
     @app.on_event("startup")

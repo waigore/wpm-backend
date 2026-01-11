@@ -1,6 +1,6 @@
 """Pydantic models for portfolio-related data structures."""
 
-from typing import Optional
+from typing import Dict, Optional
 from fastapi_pagination import Page
 from pydantic import BaseModel, Field, computed_field
 
@@ -100,4 +100,18 @@ class PortfolioAssetLotsResponse(BaseModel):
     """Response model for /portfolio/lots/<ticker> endpoint with paginated lots."""
 
     lots: Page[Lot] = Field(..., description="Paginated list of lots")
+
+
+class PortfolioHistoryPoint(BaseModel):
+    """Model representing a single portfolio history point."""
+
+    date: str = Field(..., description="Date of the history point (ISO format YYYY-MM-DD)")
+    total_market_value: float = Field(..., ge=0, description="Total market value of the portfolio on this date in USD")
+    asset_positions: Dict[str, float] = Field(..., description="Dictionary mapping ticker symbols to position values (quantity * price) on this date")
+
+
+class PortfolioPerformanceResponse(BaseModel):
+    """Response model for /portfolio/all/performance endpoint with historical performance data."""
+
+    history_points: list[PortfolioHistoryPoint] = Field(..., description="List of portfolio history points, one for each day from start_date to end_date (inclusive)")
 
