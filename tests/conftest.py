@@ -70,6 +70,12 @@ def mock_price_service():
 
 
 @pytest.fixture
+def mock_asset_service():
+    """Mock AssetService fixture."""
+    return MagicMock()
+
+
+@pytest.fixture
 def mock_price_map(mock_composite_portfolio):
     """Mock price map fixture."""
     from wpm.models import Asset

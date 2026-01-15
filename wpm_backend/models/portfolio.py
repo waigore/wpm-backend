@@ -1,6 +1,6 @@
 """Pydantic models for portfolio-related data structures."""
 
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from fastapi_pagination import Page
 from pydantic import BaseModel, Field, computed_field
 
@@ -118,4 +118,17 @@ class PortfolioPerformanceResponse(BaseModel):
     """Response model for /portfolio/all/performance endpoint with historical performance data."""
 
     history_points: list[PortfolioHistoryPoint] = Field(..., description="List of portfolio history points, one for each day from start_date to end_date (inclusive)")
+
+
+class AssetMetadataResponse(BaseModel):
+    """Response model for /asset/metadata/{ticker} endpoint with asset metadata."""
+
+    ticker: str = Field(..., description="Asset ticker symbol")
+    metadata: Optional[Dict[str, Any]] = Field(..., description="Metadata dictionary from wpm library, or None if retrieval fails")
+
+
+class AssetMetadataAllResponse(BaseModel):
+    """Response model for /asset/metadata/all endpoint with metadata for all tickers."""
+
+    metadata: Dict[str, Optional[Dict[str, Any]]] = Field(..., description="Dictionary mapping ticker to metadata dict (None if retrieval fails for that ticker)")
 

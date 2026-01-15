@@ -8,6 +8,7 @@ from typing import Dict, Optional, Tuple
 from fastapi import FastAPI
 
 from wpm import importer
+from wpm.asset import AssetService
 from wpm.pricing import PriceService
 from wpm.portfolio import CompositePortfolio, get_historical_performance
 
@@ -170,12 +171,22 @@ async def run_startup_logic(app: FastAPI, settings: Settings) -> None:
     logger.info("Application startup initiated")
 
     # Create shared PriceService instance
+    price_service = None
     try:
-        app.state.price_service = PriceService()
+        price_service = PriceService()
+        app.state.price_service = price_service
         logger.info("PriceService instance created and stored in app state")
     except Exception as e:
         logger.error(f"Failed to create PriceService: {e}", exc_info=True)
         # Continue startup even if PriceService creation fails - may still work for some operations
+
+    # Create shared AssetService instance (requires PriceService for metadata retrieval)
+    try:
+        app.state.asset_service = AssetService(price_service=price_service)
+        logger.info("AssetService instance created and stored in app state")
+    except Exception as e:
+        logger.error(f"Failed to create AssetService: {e}", exc_info=True)
+        # Continue startup even if AssetService creation fails - metadata endpoints won't work
 
     # Import CSV files using wpm library
     import_dir = Path(settings.import_dir)

@@ -2,8 +2,9 @@
 
 import logging
 from datetime import date, datetime, timedelta
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
+from wpm.asset import AssetService
 from wpm.models import Asset, Position as WPMPosition, Trade as WPMTrade
 from wpm.portfolio import CompositePortfolio, fetch_price_map, get_historical_performance, get_positions_with_allocations
 from wpm.pricing import PriceService
@@ -765,3 +766,99 @@ def get_portfolio_performance(
     
     logger.info(f"Transformed {len(api_history_points)} history points to API models")
     return api_history_points
+
+
+def get_asset_metadata(
+    composite: CompositePortfolio,
+    ticker: str,
+    asset_service: AssetService,
+) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve metadata for a single asset ticker from the wpm library using AssetService.
+
+    Args:
+        composite: CompositePortfolio instance from wpm library
+        ticker: Asset ticker symbol
+        asset_service: AssetService instance for retrieving metadata
+
+    Returns:
+        Metadata dictionary or None if retrieval fails
+
+    Raises:
+        ValueError: If ticker is not found in portfolio
+    """
+    logger.info(f"Retrieving metadata for ticker: {ticker}")
+
+    # Get asset_type from portfolio
+    assets = composite.get_assets()
+    if ticker not in assets:
+        logger.warning(f"Ticker {ticker} not found in portfolio")
+        raise ValueError(f"Ticker {ticker} not found in portfolio")
+
+    asset = assets[ticker]
+    asset_type = asset.asset_type
+    logger.info(f"Found asset {ticker} with asset_type: {asset_type}")
+
+    # Get metadata from AssetService
+    try:
+        metadata = asset_service.get_metadata(ticker, asset_type)
+        if metadata is None:
+            logger.warning(f"Metadata retrieval failed for ticker: {ticker}")
+        else:
+            logger.info(f"Successfully retrieved metadata for ticker: {ticker}")
+        return metadata
+    except Exception as e:
+        logger.error(f"Error retrieving metadata for ticker {ticker}: {e}", exc_info=True)
+        return None
+
+
+def get_all_asset_metadata(
+    composite: CompositePortfolio,
+    asset_service: AssetService,
+) -> Dict[str, Optional[Dict[str, Any]]]:
+    """
+    Retrieve metadata for all tickers in the portfolio from the wpm library using AssetService.
+
+    Args:
+        composite: CompositePortfolio instance from wpm library
+        asset_service: AssetService instance for retrieving metadata
+
+    Returns:
+        Dictionary mapping ticker to metadata (None if retrieval fails for that ticker)
+    """
+    logger.info("Retrieving metadata for all tickers in portfolio")
+
+    # Get all tickers from portfolio
+    assets = composite.get_assets()
+    logger.info(f"Found {len(assets)} tickers in portfolio")
+
+    if not assets:
+        logger.info("Portfolio is empty, returning empty metadata dictionary")
+        return {}
+
+    # Group tickers by asset_type (get_metadata_batch requires all tickers to have same asset_type)
+    tickers_by_asset_type: Dict[str, List[str]] = {}
+    for ticker, asset in assets.items():
+        asset_type = asset.asset_type
+        if asset_type not in tickers_by_asset_type:
+            tickers_by_asset_type[asset_type] = []
+        tickers_by_asset_type[asset_type].append(ticker)
+
+    logger.info(f"Grouped tickers into {len(tickers_by_asset_type)} asset types: {list(tickers_by_asset_type.keys())}")
+
+    # Retrieve metadata for each asset_type group
+    all_metadata: Dict[str, Optional[Dict[str, Any]]] = {}
+    for asset_type, tickers in tickers_by_asset_type.items():
+        logger.info(f"Retrieving metadata for {len(tickers)} tickers of asset_type: {asset_type}")
+        try:
+            metadata_batch = asset_service.get_metadata_batch(tickers, asset_type)
+            all_metadata.update(metadata_batch)
+            logger.info(f"Successfully retrieved metadata for {len([m for m in metadata_batch.values() if m is not None])} out of {len(tickers)} tickers")
+        except Exception as e:
+            logger.error(f"Error retrieving metadata batch for asset_type {asset_type}: {e}", exc_info=True)
+            # Set None for all tickers in this group if batch retrieval fails
+            for ticker in tickers:
+                all_metadata[ticker] = None
+
+    logger.info(f"Retrieved metadata for {len(all_metadata)} tickers total")
+    return all_metadata

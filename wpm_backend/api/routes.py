@@ -8,14 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi_pagination import Page, Params, paginate
 from fastapi.security import OAuth2PasswordBearer
 
+from wpm.asset import AssetService
 from wpm.portfolio import CompositePortfolio, fetch_price_map
 from wpm.pricing import PriceService
 
 from wpm_backend.auth.auth import authenticate_user, create_access_token, verify_token
 from wpm_backend.config import Settings, get_settings
 from wpm_backend.models.auth import LoginRequest, LoginResponse
-from wpm_backend.models.portfolio import PortfolioHistoryPoint, PortfolioPerformanceResponse, Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesResponse
-from wpm_backend.services.portfolio_service import apply_granularity_filter, get_all_positions, get_asset_lots, get_asset_trades, get_cached_portfolio_performance, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
+from wpm_backend.models.portfolio import AssetMetadataAllResponse, AssetMetadataResponse, PortfolioHistoryPoint, PortfolioPerformanceResponse, Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesResponse
+from wpm_backend.services.portfolio_service import apply_granularity_filter, get_all_asset_metadata, get_all_positions, get_asset_lots, get_asset_metadata, get_asset_trades, get_cached_portfolio_performance, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,29 @@ def get_price_service(request: Request) -> PriceService:
             detail="Price service not available",
         )
     return price_service
+
+
+def get_asset_service(request: Request) -> AssetService:
+    """
+    Dependency function to get asset service from app state.
+
+    Args:
+        request: FastAPI Request object to access app.state
+
+    Returns:
+        AssetService instance from app state
+
+    Raises:
+        HTTPException: 500 if asset service is not available
+    """
+    asset_service = getattr(request.app.state, "asset_service", None)
+    if asset_service is None:
+        logger.error("AssetService not available in application state")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Asset service not available",
+        )
+    return asset_service
 
 
 @router.get("/portfolio/all", response_model=PortfolioAllResponse)
@@ -655,5 +679,111 @@ def get_portfolio_performance_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error while retrieving portfolio performance",
+        )
+
+
+@router.get("/asset/metadata/all", response_model=AssetMetadataAllResponse)
+def get_all_asset_metadata_endpoint(
+    username: str = Depends(get_current_user),
+    composite_portfolio: CompositePortfolio = Depends(get_composite_portfolio),
+    asset_service: AssetService = Depends(get_asset_service),
+) -> AssetMetadataAllResponse:
+    """
+    GET endpoint to retrieve metadata for all tickers in the portfolio.
+
+    Requires JWT authentication.
+
+    Args:
+        username: Authenticated username (from token)
+        composite_portfolio: Composite portfolio instance (injected via dependency)
+        asset_service: Asset service instance (injected via dependency)
+
+    Returns:
+        AssetMetadataAllResponse containing dictionary mapping ticker to metadata
+
+    Raises:
+        HTTPException: 500 if asset service is not available
+    """
+    logger.info(
+        f"All asset metadata request received from user: {username}"
+    )
+
+    try:
+        # Get metadata for all tickers from service layer
+        metadata = get_all_asset_metadata(
+            composite_portfolio,
+            asset_service,
+        )
+
+        logger.info(
+            f"All asset metadata response sent to user: {username}, "
+            f"tickers_count={len(metadata)}, "
+            f"metadata_available_count={len([m for m in metadata.values() if m is not None])}"
+        )
+
+        return AssetMetadataAllResponse(metadata=metadata)
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving all asset metadata: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error while retrieving all asset metadata",
+        )
+
+
+@router.get("/asset/metadata/{ticker}", response_model=AssetMetadataResponse)
+def get_asset_metadata_endpoint(
+    ticker: str,
+    username: str = Depends(get_current_user),
+    composite_portfolio: CompositePortfolio = Depends(get_composite_portfolio),
+    asset_service: AssetService = Depends(get_asset_service),
+) -> AssetMetadataResponse:
+    """
+    GET endpoint to retrieve metadata for a specific asset ticker.
+
+    Requires JWT authentication.
+
+    Args:
+        ticker: Asset ticker symbol
+        username: Authenticated username (from token)
+        composite_portfolio: Composite portfolio instance (injected via dependency)
+        asset_service: Asset service instance (injected via dependency)
+
+    Returns:
+        AssetMetadataResponse containing ticker and metadata dictionary
+
+    Raises:
+        HTTPException: 404 if ticker is not found in portfolio
+        HTTPException: 500 if asset service is not available
+    """
+    logger.info(
+        f"Asset metadata request received from user: {username}, ticker={ticker}"
+    )
+
+    try:
+        # Get metadata from service layer
+        metadata = get_asset_metadata(
+            composite_portfolio,
+            ticker,
+            asset_service,
+        )
+
+        logger.info(
+            f"Asset metadata response sent to user: {username}, ticker={ticker}, "
+            f"metadata_available={metadata is not None}"
+        )
+
+        return AssetMetadataResponse(ticker=ticker, metadata=metadata)
+    except ValueError as e:
+        # Handle ticker not found
+        logger.warning(f"Error retrieving metadata for ticker {ticker}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving metadata for ticker {ticker}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error while retrieving metadata for ticker {ticker}",
         )
 

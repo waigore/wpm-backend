@@ -119,6 +119,9 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `get_asset_lots_endpoint(ticker: str, ...) -> PortfolioAssetLotsResponse`: GET endpoint at `/portfolio/lots/{ticker}` that requires JWT authentication. Supports pagination, date filtering, and sorting via query parameters: `page` (default: 1), `size` (default: 20, max: 100), `start_date` (optional, ISO format YYYY-MM-DD), `end_date` (optional, ISO format YYYY-MM-DD), `sort_by` (default: "date"), and `sort_order` (default: "asc"). Verifies token via auth module, retrieves CompositePortfolio and PriceService from application state, calls portfolio_service.get_asset_lots() with ticker, price_service, date filtering, and sorting parameters to fetch and transform lots, applies pagination using fastapi-pagination, then returns PortfolioAssetLotsResponse containing paginated lots. Validates date formats and date range (start_date <= end_date), validates sort_by against allowed Lot fields (date, original_quantity, remaining_quantity, cost_basis, broker, realized_pnl, unrealized_pnl, total_pnl), returns 400 Bad Request for invalid dates or sort_by field, 404 Not Found if ticker doesn't exist. Logs request/response at INFO level.
 - `get_portfolio_performance_endpoint(...) -> PortfolioPerformanceResponse`: GET endpoint at `/portfolio/all/performance` that requires JWT authentication. Supports optional date filtering via query parameters: `start_date` (optional, ISO format YYYY-MM-DD, defaults to portfolio start_date) and `end_date` (optional, ISO format YYYY-MM-DD, defaults to today). Supports granularity control via query parameter: `granularity` (optional, default: "daily", values: "daily", "weekly", "monthly"). Verifies token via auth module, retrieves performance cache and cache_end_date from application state via `get_performance_cache()` dependency, retrieves historical CompositePortfolio from application state (created via cloning at startup), parses start_date if provided (defaults to portfolio's start_date property if not provided), parses end_date if provided (defaults to today if not provided), clamps both start_date and end_date to portfolio start_date if they are before it (no error thrown), validates date range (start_date <= end_date after clamping), validates end_date <= cache_end_date, calls portfolio_service.get_cached_portfolio_performance() with cache, cache_end_date, start_date, and end_date to retrieve all daily cached history points, then calls portfolio_service.apply_granularity_filter() with the retrieved history points, start_date, end_date, and granularity to filter points based on granularity parameter, then returns PortfolioPerformanceResponse containing filtered list of PortfolioHistoryPoint objects. For "weekly" granularity, returns history points spaced one week apart starting from the next Monday after start_date (if start_date is not a Monday). For "monthly" granularity, returns history points at the start of each month. Returns 400 Bad Request for invalid date format, invalid granularity value, or if end_date > cache_end_date (indicates max available date), 422 Unprocessable Entity for invalid granularity value (handled by FastAPI Query validation), 500 Internal Server Error if cache is not available or if historical portfolio is not available. Logs request/response at INFO level including start_date, end_date, and granularity parameters.
 - `get_performance_cache(request: Request) -> tuple[Dict[str, PortfolioHistoryPoint], Optional[date]]`: Dependency function that retrieves performance cache and cache_end_date from application state. Returns tuple of (cache_dict, cache_end_date). Raises HTTPException with 500 status if cache is not available. Used to provide cached performance data to the performance endpoint.
+- `get_asset_metadata_endpoint(ticker: str, ...) -> AssetMetadataResponse`: GET endpoint at `/asset/metadata/{ticker}` that requires JWT authentication. Verifies token via auth module, retrieves CompositePortfolio and AssetService from application state, calls portfolio_service.get_asset_metadata() with ticker and asset_service to fetch metadata for the specified ticker, then returns AssetMetadataResponse containing ticker and metadata dictionary (may be None if retrieval fails). Returns 404 Not Found if ticker doesn't exist in portfolio. Returns 500 Internal Server Error if AssetService is not available. Logs request/response at INFO level.
+- `get_all_asset_metadata_endpoint(...) -> AssetMetadataAllResponse`: GET endpoint at `/asset/metadata/all` that requires JWT authentication. Verifies token via auth module, retrieves CompositePortfolio and AssetService from application state, calls portfolio_service.get_all_asset_metadata() with composite and asset_service to fetch metadata for all tickers in the portfolio, then returns AssetMetadataAllResponse containing dictionary mapping ticker to metadata (None if retrieval fails for that ticker). Returns 500 Internal Server Error if AssetService is not available. Logs request/response at INFO level.
+- `get_asset_service(request: Request) -> AssetService`: Dependency function that retrieves AssetService from application state. Returns AssetService instance. Raises HTTPException with 500 status if AssetService is not available. Used to provide AssetService to metadata endpoints.
 - `get_current_user(token: str = Depends(oauth2_scheme), settings: Settings = Depends(get_settings)) -> str`: Dependency function that extracts JWT token from Authorization header using OAuth2PasswordBearer, verifies it via auth module, and returns username. Raises HTTPException with 401 status if token is invalid or expired. Used to protect endpoints requiring authentication.
 
 **Artifacts**: None
@@ -164,6 +167,8 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `get_cached_portfolio_performance(cache: Dict[str, PortfolioHistoryPoint], cache_end_date: Optional[date], start_date: date, end_date: date) -> List[PortfolioHistoryPoint]`: Retrieves and filters cached portfolio performance history points by date range. Validates that end_date <= cache_end_date (raises ValueError if cache_end_date is None or if end_date > cache_end_date). Validates that start_date <= end_date. Iterates through dates from start_date to end_date (inclusive), retrieves from cache dictionary using ISO format date string, builds list of PortfolioHistoryPoint objects in chronological order. Returns filtered list of PortfolioHistoryPoint objects. Raises ValueError with descriptive message if validation fails or if required dates are missing from cache. Logs retrieval at INFO level (date range, number of points returned).
 - `apply_granularity_filter(history_points: List[PortfolioHistoryPoint], start_date: date, end_date: date, granularity: str = "daily") -> List[PortfolioHistoryPoint]`: Filter history points based on granularity parameter. Takes a list of all daily history points (must be sorted chronologically) and filters them according to the specified granularity: "daily" (returns all points), "weekly" (returns points at weekly intervals starting from the next Monday after start_date), or "monthly" (returns points at the start of each month). Uses utility functions from `portfolio_utils.py` for date calculations. Returns filtered list of PortfolioHistoryPoint objects in chronological order. Logs filtering at INFO level (granularity, number of points before/after filtering).
 - `get_portfolio_performance(portfolio: CompositePortfolio, price_service: PriceService, start_date: date, end_date: date) -> List[PortfolioHistoryPoint]`: Retrieves historical performance data from the wpm historical portfolio using `wpm.portfolio.get_historical_performance(portfolio, price_service, start_date, end_date)` which returns a list of PortfolioHistoryPoint objects. Transforms wpm PortfolioHistoryPoint objects (containing date, total_market_value, asset_positions, prices) into API PortfolioHistoryPoint models. Extracts date and converts to ISO format string (YYYY-MM-DD), extracts total_market_value as float, extracts asset_positions as Dict[str, float] mapping ticker to position value, extracts prices as Dict[str, float] mapping ticker to price. Logs function entry/exit and wpm library calls at INFO level. Returns list of API PortfolioHistoryPoint objects. Note: This function is kept for backward compatibility but may not be used after caching implementation.
+- `get_asset_metadata(composite: CompositePortfolio, ticker: str, asset_service: AssetService) -> Optional[Dict[str, Any]]`: Retrieves metadata for a single asset ticker from the wpm library using AssetService. Gets asset_type from portfolio using `composite.get_assets()` which returns `Dict[str, Asset]` mapping ticker to Asset object, extracts asset_type from the Asset object. Calls `asset_service.get_metadata(ticker, asset_type)` which returns Optional[Dict[str, Any]]. Returns None if metadata retrieval fails. Raises ValueError if ticker is not found in portfolio. Logs function entry/exit and wpm library calls at INFO level. Returns metadata dictionary or None.
+- `get_all_asset_metadata(composite: CompositePortfolio, asset_service: AssetService) -> Dict[str, Optional[Dict[str, Any]]]`: Retrieves metadata for all tickers in the portfolio from the wpm library using AssetService. Gets all tickers from portfolio using `composite.get_assets()` which returns `Dict[str, Asset]` mapping ticker to Asset object. Groups tickers by asset_type (since `get_metadata_batch()` requires all tickers to have the same asset_type). For each asset_type group, calls `asset_service.get_metadata_batch(tickers, asset_type)` which returns `Dict[str, Optional[Dict[str, Any]]]` mapping ticker to metadata dict (None if retrieval fails). Merges results from all asset_type groups into a single dictionary. Logs function entry/exit, number of tickers processed, and wpm library calls at INFO level. Returns dictionary mapping ticker to metadata (None if retrieval fails for that ticker).
 
 **Artifacts**: None
 
@@ -216,6 +221,11 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
   - Fields defined in Data Models section below
 - `PortfolioPerformanceResponse`: Response model for `/portfolio/all/performance` endpoint
   - `history_points`: List[PortfolioHistoryPoint] (required)
+- `AssetMetadataResponse`: Response model for `/asset/metadata/{ticker}` endpoint
+  - `ticker`: str (required)
+  - `metadata`: Optional[Dict[str, Any]] (required)
+- `AssetMetadataAllResponse`: Response model for `/asset/metadata/all` endpoint
+  - `metadata`: Dict[str, Optional[Dict[str, Any]]] (required)
 - `PortfolioResponse`: Response model for portfolio endpoints (deprecated)
   - `positions`: List[Position] (required)
   - `total_count`: int (calculated, number of positions)
@@ -248,9 +258,10 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - Generate OpenAPI specification
 
 **Key Functions**:
-- `run_startup_logic(app: FastAPI, settings: Settings) -> None`: Executes application startup logic. Creates PriceService instance and stores it in `app.state.price_service`. Imports CSV files using `wpm.importer.import_csv_files(import_dir)` and stores the returned CompositePortfolio in `app.state.composite_portfolio`. Creates a cloned historical portfolio using `composite_portfolio.clone()` (with no date filters to preserve full history) and stores it in `app.state.historical_portfolio` for use by the performance endpoint. Assumes `historical_portfolio.start_date` must exist (it is always set for such portfolios). If `start_date` is None, treats as a sanity error (logs at ERROR level, sets empty cache, continues startup). If `start_date` exists, calculates history points using `wpm.portfolio.get_historical_performance(historical_portfolio, price_service, start_date, date.today())`, transforms wpm PortfolioHistoryPoint objects (containing date, total_market_value, asset_positions, prices) to API PortfolioHistoryPoint models by extracting date (converted to ISO format string), total_market_value (as float), asset_positions (as Dict[str, float]), and prices (as Dict[str, float]), and stores them in `app.state.performance_cache` as a dictionary keyed by ISO date string (YYYY-MM-DD). Stores `date.today()` in `app.state.performance_cache_end_date` for validation. Logs cache creation at INFO level (number of points, date range). Generates OpenAPI specification using `generate_openapi_spec(app)`. Logs all operations at INFO level (ERROR level for sanity errors).
+- `run_startup_logic(app: FastAPI, settings: Settings) -> None`: Executes application startup logic. Creates PriceService instance and stores it in `app.state.price_service`. Creates AssetService instance with `AssetService(price_service=price_service)` and stores it in `app.state.asset_service` for use by metadata endpoints. Imports CSV files using `wpm.importer.import_csv_files(import_dir)` and stores the returned CompositePortfolio in `app.state.composite_portfolio`. Creates a cloned historical portfolio using `composite_portfolio.clone()` (with no date filters to preserve full history) and stores it in `app.state.historical_portfolio` for use by the performance endpoint. Assumes `historical_portfolio.start_date` must exist (it is always set for such portfolios). If `start_date` is None, treats as a sanity error (logs at ERROR level, sets empty cache, continues startup). If `start_date` exists, calculates history points using `wpm.portfolio.get_historical_performance(historical_portfolio, price_service, start_date, date.today())`, transforms wpm PortfolioHistoryPoint objects (containing date, total_market_value, asset_positions, prices) to API PortfolioHistoryPoint models by extracting date (converted to ISO format string), total_market_value (as float), asset_positions (as Dict[str, float]), and prices (as Dict[str, float]), and stores them in `app.state.performance_cache` as a dictionary keyed by ISO date string (YYYY-MM-DD). Stores `date.today()` in `app.state.performance_cache_end_date` for validation. Logs cache creation at INFO level (number of points, date range). Generates OpenAPI specification using `generate_openapi_spec(app)`. Logs all operations at INFO level (ERROR level for sanity errors).
 
 **Key Variables**:
+- `app.state.asset_service`: AssetService instance for retrieving asset metadata, populated at startup
 - `app.state.performance_cache`: Dictionary keyed by ISO date string (YYYY-MM-DD), mapping to PortfolioHistoryPoint API models, populated at startup
 - `app.state.performance_cache_end_date`: Date object representing the maximum date in the cache (date.today() at startup time), used for validation
 
@@ -290,8 +301,9 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `InteractiveCLI.trades_command(ticker: str) -> None`: Calls GET `/portfolio/trades/{ticker}` endpoint via TestClient with stored JWT token in Authorization header. Displays the response (paginated trades) in formatted JSON using `json.dumps()` with `indent=2`. Handles authentication errors (401), not found errors (404), validation errors (400), and server errors (500) with user-friendly error messages.
 - `InteractiveCLI.lots_command(ticker: str) -> None`: Calls GET `/portfolio/lots/{ticker}` endpoint via TestClient with stored JWT token in Authorization header. Displays the response (paginated lots) in formatted JSON using `json.dumps()` with `indent=2`. Handles authentication errors (401), not found errors (404), validation errors (400), and server errors (500) with user-friendly error messages.
 - `InteractiveCLI.performance_command(end_date: Optional[str] = None) -> None`: Calls GET `/portfolio/all/performance?end_date={end_date}` endpoint via TestClient with stored JWT token in Authorization header. If `end_date` is None or not provided, defaults to today's date using `date.today().isoformat()`. Extracts history_points from response, displays only the last 10 history points in formatted JSON using `json.dumps()` with `indent=2`. Handles authentication errors (401), validation errors (400), and server errors (500) with user-friendly error messages.
-- `InteractiveCLI.run() -> None`: Main interactive loop that prompts for commands, parses input, routes to appropriate command handlers, and continues until user enters `exit` or `quit`. For `performance` command, allows calling without arguments (defaults to today's date) or with optional date parameter.
-- `InteractiveCLI.show_help() -> None`: Displays list of available commands and their descriptions, including the `trades <ticker>`, `lots <ticker>`, and `performance [YYYY-MM-DD]` commands (brackets indicate optional parameter, defaults to today if not provided).
+- `InteractiveCLI.metadata_command(tickers: List[str]) -> None`: Calls GET `/asset/metadata/{ticker}` endpoint via TestClient with stored JWT token in Authorization header for each ticker in the provided list. Displays the response (metadata dictionary) in formatted JSON using `json.dumps()` with `indent=2` for each ticker. Handles authentication errors (401), not found errors (404), and server errors (500) with user-friendly error messages. Each ticker's result is displayed independently - if one fails, others still process.
+- `InteractiveCLI.run() -> None`: Main interactive loop that prompts for commands, parses input, routes to appropriate command handlers, and continues until user enters `exit` or `quit`. For `performance` command, allows calling without arguments (defaults to today's date) or with optional date parameter. For `metadata` command, extracts all arguments after "metadata" as a list of tickers.
+- `InteractiveCLI.show_help() -> None`: Displays list of available commands and their descriptions, including the `trades <ticker>`, `lots <ticker>`, `performance [YYYY-MM-DD]`, and `metadata <ticker1> [ticker2] ...` commands (brackets indicate optional parameters).
 
 **Key Variables**:
 - `InteractiveCLI.client`: TestClient instance for making API requests
@@ -303,6 +315,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `trades <ticker>`: Retrieves all trades for the specified asset ticker via `/portfolio/trades/{ticker}` endpoint, displays formatted JSON
 - `lots <ticker>`: Retrieves all lots for the specified asset ticker via `/portfolio/lots/{ticker}` endpoint, displays formatted JSON
 - `performance [YYYY-MM-DD]`: Retrieves historical performance data via `/portfolio/all/performance?end_date=YYYY-MM-DD` endpoint, displays last 10 history points in formatted JSON. Date parameter is optional and defaults to today if not provided.
+- `metadata <ticker1> [ticker2] ...`: Retrieves metadata for one or more asset tickers via `/asset/metadata/{ticker}` endpoint (called once per ticker), displays formatted JSON for each ticker. Example: `metadata GOOG AAPL MSFT BTC-USD`. Each ticker's result is displayed independently.
 - `help`: Lists available commands and their descriptions
 - `exit`/`quit`: Terminates the interactive session
 
@@ -680,6 +693,38 @@ Response model for the `/portfolio/all/performance` endpoint. Contains a list of
 
 **Note**: The history points are not paginated or sorted - all points are returned as the frontend is expected to utilize all points. Points are ordered chronologically from start_date to end_date.
 
+### AssetMetadataResponse
+**Location**: `wpm_backend/models/portfolio.py`
+
+Response model for the `/asset/metadata/{ticker}` endpoint. Contains metadata for a single asset ticker.
+
+**Fields**:
+- `ticker` (str, required)
+  - Description: Asset ticker symbol
+  - Source: Path parameter from request
+  - Validation: Non-empty string
+  - Example: "AAPL"
+  
+- `metadata` (Optional[Dict[str, Any]], required)
+  - Description: Metadata dictionary from wpm library, or None if retrieval fails
+  - Source: `asset_service.get_metadata(ticker, asset_type)` from wpm library
+  - Validation: Dictionary with string keys and Any values, or None
+  - Example: {"name": "Apple Inc.", "sector": "Technology", "industry": "Consumer Electronics", "country": "United States", "market_cap": 3000000000000.0, "category": "Stock"} or None
+
+### AssetMetadataAllResponse
+**Location**: `wpm_backend/models/portfolio.py`
+
+Response model for the `/asset/metadata/all` endpoint. Contains metadata for all tickers in the portfolio.
+
+**Fields**:
+- `metadata` (Dict[str, Optional[Dict[str, Any]]], required)
+  - Description: Dictionary mapping ticker to metadata dict (None if retrieval fails for that ticker)
+  - Source: `asset_service.get_metadata_batch(tickers, asset_type)` from wpm library, grouped by asset_type
+  - Validation: Dictionary with string keys (ticker) and Optional[Dict[str, Any]] values
+  - Example: {"AAPL": {"name": "Apple Inc.", "sector": "Technology", ...}, "GOOGL": {"name": "Alphabet Inc.", ...}, "BTC": None}
+
+**Note**: The metadata dictionary may contain None values for tickers where metadata retrieval failed. The structure of the metadata dictionary is defined by the wpm library and may include fields such as: name, sector, industry, country, market_cap, category.
+
 ### Page[Lot]
 **Location**: `fastapi_pagination.Page`
 
@@ -819,6 +864,11 @@ Paginated response structure used within PortfolioAllResponse. Uses fastapi-pagi
   - `wpm.models.PortfolioHistoryPoint`: Portfolio history point model with date (date), total_market_value (float), asset_positions (Dict[str, float]), prices (Dict[str, float])
   - `Portfolio.clone() -> Portfolio`: Method to create a deep copy (clone) of a portfolio
   - `Portfolio.start_date`: Property returning the earliest start_date (Optional[date])
+  - `Portfolio.get_assets() -> Dict[str, Asset]`: Returns dictionary mapping ticker to Asset object
+  - `wpm.asset.AssetService`: Service for retrieving and caching asset metadata
+  - `AssetService.__init__(cache_file: Optional[Path] = None, price_service: Optional["PriceService"] = None)`: Initialize AssetService with optional PriceService for metadata retrieval
+  - `AssetService.get_metadata(ticker: str, asset_type: str) -> Optional[Dict[str, Any]]`: Get metadata for a single asset
+  - `AssetService.get_metadata_batch(tickers: List[str], asset_type: str) -> Dict[str, Optional[Dict[str, Any]]]`: Get metadata for multiple assets with batch optimization
 
 ### Development Dependencies
 - **pytest** (>=7.4.0): Testing framework for writing and running tests

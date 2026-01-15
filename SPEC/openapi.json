@@ -525,10 +525,134 @@
           }
         }
       }
+    },
+    "/asset/metadata/all": {
+      "get": {
+        "summary": "Get All Asset Metadata Endpoint",
+        "description": "GET endpoint to retrieve metadata for all tickers in the portfolio.\n\nRequires JWT authentication.\n\nArgs:\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    asset_service: Asset service instance (injected via dependency)\n\nReturns:\n    AssetMetadataAllResponse containing dictionary mapping ticker to metadata\n\nRaises:\n    HTTPException: 500 if asset service is not available",
+        "operationId": "get_all_asset_metadata_endpoint_asset_metadata_all_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetMetadataAllResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/asset/metadata/{ticker}": {
+      "get": {
+        "summary": "Get Asset Metadata Endpoint",
+        "description": "GET endpoint to retrieve metadata for a specific asset ticker.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    asset_service: Asset service instance (injected via dependency)\n\nReturns:\n    AssetMetadataResponse containing ticker and metadata dictionary\n\nRaises:\n    HTTPException: 404 if ticker is not found in portfolio\n    HTTPException: 500 if asset service is not available",
+        "operationId": "get_asset_metadata_endpoint_asset_metadata__ticker__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticker"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetMetadataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AssetMetadataAllResponse": {
+        "properties": {
+          "metadata": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Metadata",
+            "description": "Dictionary mapping ticker to metadata dict (None if retrieval fails for that ticker)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "metadata"
+        ],
+        "title": "AssetMetadataAllResponse",
+        "description": "Response model for /asset/metadata/all endpoint with metadata for all tickers."
+      },
+      "AssetMetadataResponse": {
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "title": "Ticker",
+            "description": "Asset ticker symbol"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata",
+            "description": "Metadata dictionary from wpm library, or None if retrieval fails"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticker",
+          "metadata"
+        ],
+        "title": "AssetMetadataResponse",
+        "description": "Response model for /asset/metadata/{ticker} endpoint with asset metadata."
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {

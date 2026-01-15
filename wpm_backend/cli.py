@@ -6,7 +6,7 @@ import logging
 import sys
 from datetime import date
 from getpass import getpass
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -247,6 +247,59 @@ class InteractiveCLI:
         except Exception as e:
             print(f"Error: Failed to connect to API: {e}")
 
+    def metadata_command(self, tickers: List[str]) -> None:
+        """Call /asset/metadata/{ticker} endpoint for each ticker and display results."""
+        if not self.token:
+            print("Error: Not logged in. Please run 'login' first.")
+            return
+
+        if not tickers:
+            print("Error: At least one ticker is required. Usage: metadata <ticker1> [ticker2] ...")
+            return
+
+        # Process each ticker independently
+        for ticker in tickers:
+            try:
+                response = self.client.get(
+                    f"/asset/metadata/{ticker}",
+                    headers={"Authorization": f"Bearer {self.token}"},
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Display metadata for this ticker
+                    print(f"\nMETADATA for {ticker}")
+                    print("-" * 60)
+                    print(json.dumps(data, indent=2))
+                elif response.status_code == 401:
+                    print(f"Error: Authentication failed for ticker '{ticker}'. Token may be expired. Please run 'login' again.")
+                    self.token = None  # Clear invalid token
+                    return  # Stop processing remaining tickers if auth fails
+                elif response.status_code == 404:
+                    print(f"Error: Ticker '{ticker}' not found.")
+                    try:
+                        error_detail = response.json().get("detail", "Unknown error")
+                        print(f"Details: {error_detail}")
+                    except Exception:
+                        print(f"Response: {response.text}")
+                elif response.status_code == 500:
+                    print(f"Error: Server error while retrieving metadata for ticker '{ticker}'.")
+                    try:
+                        error_detail = response.json().get("detail", "Unknown error")
+                        print(f"Details: {error_detail}")
+                    except Exception:
+                        print(f"Response: {response.text}")
+                else:
+                    print(f"Error: Request failed for ticker '{ticker}' with status code {response.status_code}")
+                    try:
+                        error_detail = response.json().get("detail", "Unknown error")
+                        print(f"Details: {error_detail}")
+                    except Exception:
+                        print(f"Response: {response.text}")
+            except Exception as e:
+                print(f"Error: Failed to connect to API for ticker '{ticker}': {e}")
+
     def performance_command(self, end_date: Optional[str] = None, granularity: Optional[str] = None) -> None:
         """Call /portfolio/all/performance endpoint and display last 10 history points."""
         if not self.token:
@@ -348,6 +401,7 @@ class InteractiveCLI:
         print("  portfolio all   - Get all portfolio positions (requires login)")
         print("  trades <ticker> - Get all trades for an asset ticker (requires login)")
         print("  lots <ticker>   - Get all lots for an asset ticker (requires login)")
+        print("  metadata <ticker1> [ticker2] ... - Get metadata for one or more asset tickers (requires login)")
         print("  performance [YYYY-MM-DD] [granularity] - Get portfolio performance up to date (requires login, defaults to today, optional granularity: daily/weekly/monthly)")
         print("  status          - Check application status (portfolio data, services)")
         print("  help            - Show this help message")
@@ -391,6 +445,12 @@ class InteractiveCLI:
                         self.lots_command(ticker)
                     else:
                         print("Error: Ticker is required. Usage: lots <ticker>")
+                elif cmd == "metadata":
+                    if len(parts) > 1:
+                        tickers = parts[1:]
+                        self.metadata_command(tickers)
+                    else:
+                        print("Error: At least one ticker is required. Usage: metadata <ticker1> [ticker2] ...")
                 elif cmd == "performance":
                     if len(parts) > 2:
                         # Both end_date and granularity provided
