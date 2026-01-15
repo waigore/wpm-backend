@@ -1027,6 +1027,20 @@
             ],
             "title": "Unrealized Gain Loss",
             "description": "Unrealized gain or loss on the position in USD"
+          },
+          "allocation_percentage": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allocation Percentage",
+            "description": "Percentage allocation of this asset in the portfolio (0.00-100.00)"
           }
         },
         "type": "object",

@@ -23,6 +23,9 @@ class Position(BaseModel):
     unrealized_gain_loss: Optional[float] = Field(
         None, description="Unrealized gain or loss on the position in USD"
     )
+    allocation_percentage: Optional[float] = Field(
+        None, ge=0, le=100, description="Percentage allocation of this asset in the portfolio (0.00-100.00)"
+    )
 
 
 class PortfolioAllResponse(BaseModel):

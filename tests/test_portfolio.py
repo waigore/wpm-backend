@@ -20,8 +20,18 @@ def test_get_all_positions_service(mock_composite_portfolio, mock_price_service)
         assets[1]: 150.00,  # GOOGL price
     }
 
+    # Mock get_positions_with_allocations
+    # Total market value: 17550.0 + 7500.0 = 25050.0
+    # AAPL allocation: (17550.0 / 25050.0) * 100 = 70.06%
+    # GOOGL allocation: (7500.0 / 25050.0) * 100 = 29.94%
+    positions_with_allocations = {
+        assets[0]: (mock_composite_portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        positions = get_all_positions(mock_composite_portfolio, mock_price_service)
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            positions = get_all_positions(mock_composite_portfolio, mock_price_service)
 
     assert len(positions) == 2
 
@@ -35,6 +45,7 @@ def test_get_all_positions_service(mock_composite_portfolio, mock_price_service)
     assert position1.current_price == 175.50
     assert position1.market_value == 17550.0  # 100 * 175.50
     assert position1.unrealized_gain_loss == 2550.0  # 17550 - 15000
+    assert position1.allocation_percentage == 70.06
 
     # Check second position (GOOGL)
     position2 = positions[1]
@@ -46,6 +57,7 @@ def test_get_all_positions_service(mock_composite_portfolio, mock_price_service)
     assert position2.current_price == 150.00
     assert position2.market_value == 7500.0  # 50 * 150.00
     assert position2.unrealized_gain_loss == 2500.0  # 7500 - 5000
+    assert position2.allocation_percentage == 29.94
 
 
 def test_get_all_positions_without_prices(mock_composite_portfolio, mock_price_service):
@@ -57,8 +69,15 @@ def test_get_all_positions_without_prices(mock_composite_portfolio, mock_price_s
         assets[1]: None,
     }
 
+    # Mock get_positions_with_allocations - when prices are None, allocations should be 0.00
+    positions_with_allocations = {
+        assets[0]: (mock_composite_portfolio.get_positions()[assets[0]], Decimal("0.00")),
+        assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("0.00")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        positions = get_all_positions(mock_composite_portfolio, mock_price_service)
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            positions = get_all_positions(mock_composite_portfolio, mock_price_service)
 
     assert len(positions) == 2
 
@@ -67,6 +86,7 @@ def test_get_all_positions_without_prices(mock_composite_portfolio, mock_price_s
         assert position.current_price is None
         assert position.market_value is None
         assert position.unrealized_gain_loss is None
+        assert position.allocation_percentage == 0.00
 
 
 def test_get_all_positions_partial_prices(mock_composite_portfolio, mock_price_service):
@@ -77,8 +97,17 @@ def test_get_all_positions_partial_prices(mock_composite_portfolio, mock_price_s
         assets[1]: None,  # GOOGL has no price
     }
 
+    # Mock get_positions_with_allocations
+    # AAPL market value: 17550.0, GOOGL market value: 0 (no price)
+    # Total: 17550.0, so AAPL = 100%, GOOGL = 0%
+    positions_with_allocations = {
+        assets[0]: (mock_composite_portfolio.get_positions()[assets[0]], Decimal("100.00")),
+        assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("0.00")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        positions = get_all_positions(mock_composite_portfolio, mock_price_service)
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            positions = get_all_positions(mock_composite_portfolio, mock_price_service)
 
     assert len(positions) == 2
 
@@ -87,12 +116,14 @@ def test_get_all_positions_partial_prices(mock_composite_portfolio, mock_price_s
     assert position1.current_price == 175.50
     assert position1.market_value is not None
     assert position1.unrealized_gain_loss is not None
+    assert position1.allocation_percentage == 100.00
 
     # Second position should not have price data
     position2 = positions[1]
     assert position2.current_price is None
     assert position2.market_value is None
     assert position2.unrealized_gain_loss is None
+    assert position2.allocation_percentage == 0.00
 
 
 def test_portfolio_all_endpoint(client_with_portfolio, test_settings):
@@ -119,11 +150,18 @@ def test_portfolio_all_endpoint(client_with_portfolio, test_settings):
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        response = client_with_portfolio.get(
-            "/portfolio/all",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            response = client_with_portfolio.get(
+                "/portfolio/all",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -146,6 +184,12 @@ def test_portfolio_all_endpoint(client_with_portfolio, test_settings):
     assert positions["size"] == 20
     assert positions["pages"] == 1
     assert len(positions["items"]) == 2
+    
+    # Check that allocation_percentage is present in position items
+    for item in positions["items"]:
+        assert "allocation_percentage" in item
+        assert item["allocation_percentage"] is not None
+        assert 0 <= item["allocation_percentage"] <= 100
     
     # Check totals
     assert data["total_cost_basis"] == 20000.0
@@ -207,14 +251,22 @@ def test_data_transformation_decimal_to_float(mock_composite_portfolio, mock_pri
         assets[1]: 150.00,
     }
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (mock_composite_portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        positions = get_all_positions(mock_composite_portfolio, mock_price_service)
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            positions = get_all_positions(mock_composite_portfolio, mock_price_service)
 
     # Verify quantities are floats, not Decimals
     for position in positions:
         assert isinstance(position.quantity, float)
         assert isinstance(position.average_price, float)
         assert isinstance(position.cost_basis, float)
+        assert isinstance(position.allocation_percentage, float)
 
 
 def test_average_price_calculation(mock_composite_portfolio, mock_price_service):
@@ -227,8 +279,15 @@ def test_average_price_calculation(mock_composite_portfolio, mock_price_service)
         assets[1]: 150.00,
     }
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (mock_composite_portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        positions = get_all_positions(mock_composite_portfolio, mock_price_service)
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            positions = get_all_positions(mock_composite_portfolio, mock_price_service)
 
     # Check average_price calculation: cost_basis / quantity
     position1 = positions[0]
@@ -250,16 +309,104 @@ def test_get_all_positions_sorting_service(mock_composite_portfolio, mock_price_
         assets[1]: 150.00,  # GOOGL price
     }
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (mock_composite_portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        # Test sorting by ticker descending
-        positions = get_all_positions(
-            mock_composite_portfolio, mock_price_service, sort_by="ticker", sort_order="desc"
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            # Test sorting by ticker descending
+            positions = get_all_positions(
+                mock_composite_portfolio, mock_price_service, sort_by="ticker", sort_order="desc"
+            )
 
     assert len(positions) == 2
     # Should be sorted descending, so GOOGL comes first
     assert positions[0].ticker == "GOOGL"
     assert positions[1].ticker == "AAPL"
+
+
+def test_get_all_positions_sorting_by_allocation_percentage(mock_composite_portfolio, mock_price_service):
+    """Test get_all_positions() service function with sorting by allocation_percentage."""
+    assets = list(mock_composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,  # AAPL price
+        assets[1]: 150.00,  # GOOGL price
+    }
+
+    # Mock get_positions_with_allocations
+    # AAPL: 70.06%, GOOGL: 29.94%
+    positions_with_allocations = {
+        assets[0]: (mock_composite_portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            # Test sorting by allocation_percentage ascending (smallest first)
+            positions_asc = get_all_positions(
+                mock_composite_portfolio, mock_price_service, sort_by="allocation_percentage", sort_order="asc"
+            )
+
+            # Test sorting by allocation_percentage descending (largest first)
+            positions_desc = get_all_positions(
+                mock_composite_portfolio, mock_price_service, sort_by="allocation_percentage", sort_order="desc"
+            )
+
+    assert len(positions_asc) == 2
+    assert len(positions_desc) == 2
+
+    # Ascending: GOOGL (29.94%) should come first, then AAPL (70.06%)
+    assert positions_asc[0].ticker == "GOOGL"
+    assert positions_asc[0].allocation_percentage == 29.94
+    assert positions_asc[1].ticker == "AAPL"
+    assert positions_asc[1].allocation_percentage == 70.06
+
+    # Descending: AAPL (70.06%) should come first, then GOOGL (29.94%)
+    assert positions_desc[0].ticker == "AAPL"
+    assert positions_desc[0].allocation_percentage == 70.06
+    assert positions_desc[1].ticker == "GOOGL"
+    assert positions_desc[1].allocation_percentage == 29.94
+
+
+def test_get_all_positions_sorting_allocation_percentage_with_none(mock_composite_portfolio, mock_price_service):
+    """Test sorting by allocation_percentage when some values are None."""
+    assets = list(mock_composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,  # AAPL has price
+        assets[1]: None,  # GOOGL has no price
+    }
+
+    # Mock get_positions_with_allocations - one with allocation, one without
+    positions_with_allocations = {
+        assets[0]: (mock_composite_portfolio.get_positions()[assets[0]], Decimal("100.00")),
+        assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("0.00")),
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            # Test sorting by allocation_percentage ascending (None should come first)
+            positions_asc = get_all_positions(
+                mock_composite_portfolio, mock_price_service, sort_by="allocation_percentage", sort_order="asc"
+            )
+
+            # Test sorting by allocation_percentage descending (None should come last)
+            positions_desc = get_all_positions(
+                mock_composite_portfolio, mock_price_service, sort_by="allocation_percentage", sort_order="desc"
+            )
+
+    assert len(positions_asc) == 2
+    assert len(positions_desc) == 2
+
+    # Ascending: 0.00 should come first, then 100.00
+    assert positions_asc[0].allocation_percentage == 0.00
+    assert positions_asc[1].allocation_percentage == 100.00
+
+    # Descending: 100.00 should come first, then 0.00
+    assert positions_desc[0].allocation_percentage == 100.00
+    assert positions_desc[1].allocation_percentage == 0.00
 
 
 def test_get_all_positions_sorting_invalid_field(mock_composite_portfolio, mock_price_service):
@@ -270,11 +417,18 @@ def test_get_all_positions_sorting_invalid_field(mock_composite_portfolio, mock_
         assets[1]: 150.00,
     }
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (mock_composite_portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        with pytest.raises(ValueError, match="Invalid sort_by field"):
-            get_all_positions(
-                mock_composite_portfolio, mock_price_service, sort_by="invalid_field"
-            )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            with pytest.raises(ValueError, match="Invalid sort_by field"):
+                get_all_positions(
+                    mock_composite_portfolio, mock_price_service, sort_by="invalid_field"
+                )
 
 
 def test_get_all_positions_exception_handling(mock_composite_portfolio, mock_price_service):
@@ -304,8 +458,16 @@ def test_get_all_positions_exception_handling(mock_composite_portfolio, mock_pri
         bad_asset: 100.00,
     }
 
+    # Mock get_positions_with_allocations - include the bad position
+    positions_with_allocations = {
+        assets[0]: (mock_composite_portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("29.94")),
+        bad_asset: (bad_position, Decimal("0.00")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        positions = get_all_positions(mock_composite_portfolio, mock_price_service)
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            positions = get_all_positions(mock_composite_portfolio, mock_price_service)
 
     # Should still return the 2 valid positions, skipping the bad one
     assert len(positions) == 2
@@ -365,11 +527,18 @@ def test_portfolio_pagination_custom_page_size(client_with_portfolio, test_setti
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        response = client_with_portfolio.get(
-            "/portfolio/all?size=1",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            response = client_with_portfolio.get(
+                "/portfolio/all?size=1",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -401,30 +570,37 @@ def test_portfolio_pagination_page_navigation(client_with_portfolio, test_settin
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        # Get first page
-        response1 = client_with_portfolio.get(
-            "/portfolio/all?size=1&page=1",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert response1.status_code == 200
-        data1 = response1.json()
-        positions1 = data1["positions"]
-        assert positions1["page"] == 1
-        assert len(positions1["items"]) == 1
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            # Get first page
+            response1 = client_with_portfolio.get(
+                "/portfolio/all?size=1&page=1",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert response1.status_code == 200
+            data1 = response1.json()
+            positions1 = data1["positions"]
+            assert positions1["page"] == 1
+            assert len(positions1["items"]) == 1
 
-        # Get second page
-        response2 = client_with_portfolio.get(
-            "/portfolio/all?size=1&page=2",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert response2.status_code == 200
-        data2 = response2.json()
-        positions2 = data2["positions"]
-        assert positions2["page"] == 2
-        assert len(positions2["items"]) == 1
+            # Get second page
+            response2 = client_with_portfolio.get(
+                "/portfolio/all?size=1&page=2",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert response2.status_code == 200
+            data2 = response2.json()
+            positions2 = data2["positions"]
+            assert positions2["page"] == 2
+            assert len(positions2["items"]) == 1
 
-        # Verify different items on different pages
+            # Verify different items on different pages
         assert positions1["items"][0]["ticker"] != positions2["items"][0]["ticker"]
 
 
@@ -507,11 +683,18 @@ def test_portfolio_sorting_by_ticker_asc(client_with_portfolio, test_settings):
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        response = client_with_portfolio.get(
-            "/portfolio/all?sort_by=ticker&sort_order=asc",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            response = client_with_portfolio.get(
+                "/portfolio/all?sort_by=ticker&sort_order=asc",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -541,11 +724,18 @@ def test_portfolio_sorting_by_ticker_desc(client_with_portfolio, test_settings):
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        response = client_with_portfolio.get(
-            "/portfolio/all?sort_by=ticker&sort_order=desc",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            response = client_with_portfolio.get(
+                "/portfolio/all?sort_by=ticker&sort_order=desc",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -575,11 +765,18 @@ def test_portfolio_sorting_by_quantity(client_with_portfolio, test_settings):
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        response = client_with_portfolio.get(
-            "/portfolio/all?sort_by=quantity&sort_order=asc",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            response = client_with_portfolio.get(
+                "/portfolio/all?sort_by=quantity&sort_order=asc",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -609,11 +806,18 @@ def test_portfolio_sorting_by_cost_basis(client_with_portfolio, test_settings):
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        response = client_with_portfolio.get(
-            "/portfolio/all?sort_by=cost_basis&sort_order=asc",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            response = client_with_portfolio.get(
+                "/portfolio/all?sort_by=cost_basis&sort_order=asc",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -621,6 +825,67 @@ def test_portfolio_sorting_by_cost_basis(client_with_portfolio, test_settings):
     # GOOGL has 5000.0, AAPL has 15000.0, so GOOGL should come first
     assert items[0]["cost_basis"] == 5000.0
     assert items[1]["cost_basis"] == 15000.0
+
+
+def test_portfolio_sorting_by_allocation_percentage(client_with_portfolio, test_settings):
+    """Test sorting by allocation_percentage."""
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    assets = list(client_with_portfolio.app.state.composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,
+        assets[1]: 150.00,
+    }
+
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
+    # Mock get_positions_with_allocations
+    # AAPL: 70.06%, GOOGL: 29.94%
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            # Test ascending
+            response_asc = client_with_portfolio.get(
+                "/portfolio/all?sort_by=allocation_percentage&sort_order=asc",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+            # Test descending
+            response_desc = client_with_portfolio.get(
+                "/portfolio/all?sort_by=allocation_percentage&sort_order=desc",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response_asc.status_code == 200
+    assert response_desc.status_code == 200
+
+    # Ascending: GOOGL (29.94%) should come first
+    data_asc = response_asc.json()
+    items_asc = data_asc["positions"]["items"]
+    assert items_asc[0]["ticker"] == "GOOGL"
+    assert items_asc[0]["allocation_percentage"] == 29.94
+    assert items_asc[1]["ticker"] == "AAPL"
+    assert items_asc[1]["allocation_percentage"] == 70.06
+
+    # Descending: AAPL (70.06%) should come first
+    data_desc = response_desc.json()
+    items_desc = data_desc["positions"]["items"]
+    assert items_desc[0]["ticker"] == "AAPL"
+    assert items_desc[0]["allocation_percentage"] == 70.06
+    assert items_desc[1]["ticker"] == "GOOGL"
+    assert items_desc[1]["allocation_percentage"] == 29.94
 
 
 def test_portfolio_sorting_default_ticker_asc(client_with_portfolio, test_settings):
@@ -643,11 +908,18 @@ def test_portfolio_sorting_default_ticker_asc(client_with_portfolio, test_settin
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        response = client_with_portfolio.get(
-            "/portfolio/all",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            response = client_with_portfolio.get(
+                "/portfolio/all",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -711,15 +983,23 @@ def test_portfolio_sorting_all_fields(client_with_portfolio, test_settings):
         "current_price",
         "market_value",
         "unrealized_gain_loss",
+        "allocation_percentage",
     ]
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        for field in valid_fields:
-            response = client_with_portfolio.get(
-                f"/portfolio/all?sort_by={field}",
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            assert response.status_code == 200, f"Field {field} should be sortable"
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            for field in valid_fields:
+                response = client_with_portfolio.get(
+                    f"/portfolio/all?sort_by={field}",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert response.status_code == 200, f"Field {field} should be sortable"
 
 
 def test_portfolio_sorting_with_none_values(client_with_portfolio, test_settings):
@@ -743,12 +1023,19 @@ def test_portfolio_sorting_with_none_values(client_with_portfolio, test_settings
     portfolio.get_total_market_value = lambda prices: 15000.0  # Only GOOGL has price
     portfolio.get_total_unrealized_pnl = lambda prices: -5000.0
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("0.00")),  # AAPL has no price
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("100.00")),  # GOOGL has price
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        # Sort by current_price ascending - None should come first
-        response = client_with_portfolio.get(
-            "/portfolio/all?sort_by=current_price&sort_order=asc",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            # Sort by current_price ascending - None should come first
+            response = client_with_portfolio.get(
+                "/portfolio/all?sort_by=current_price&sort_order=asc",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -773,12 +1060,25 @@ def test_portfolio_pagination_and_sorting(client_with_portfolio, test_settings):
         assets[1]: 150.00,
     }
 
+    # Mock portfolio totals methods
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_total_cost_basis = lambda: 20000.0
+    portfolio.get_total_market_value = lambda prices: 25050.0
+    portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        # Get first page, sorted by ticker descending
-        response = client_with_portfolio.get(
-            "/portfolio/all?page=1&size=1&sort_by=ticker&sort_order=desc",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            # Get first page, sorted by ticker descending
+            response = client_with_portfolio.get(
+                "/portfolio/all?page=1&size=1&sort_by=ticker&sort_order=desc",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -811,11 +1111,18 @@ def test_portfolio_all_endpoint_with_totals(client_with_portfolio, test_settings
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        response = client_with_portfolio.get(
-            "/portfolio/all",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            response = client_with_portfolio.get(
+                "/portfolio/all",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -852,11 +1159,18 @@ def test_portfolio_all_endpoint_totals_with_none_values(client_with_portfolio, t
     portfolio.get_total_market_value = lambda prices: None
     portfolio.get_total_unrealized_pnl = lambda prices: None
 
+    # Mock get_positions_with_allocations - when no prices, allocations are 0.00
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("0.00")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("0.00")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        response = client_with_portfolio.get(
-            "/portfolio/all",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            response = client_with_portfolio.get(
+                "/portfolio/all",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -889,20 +1203,27 @@ def test_portfolio_totals_pagination_independence(client_with_portfolio, test_se
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
 
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
-        # Test with different pagination parameters
-        response1 = client_with_portfolio.get(
-            "/portfolio/all?page=1&size=1",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        response2 = client_with_portfolio.get(
-            "/portfolio/all?page=2&size=1",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        response3 = client_with_portfolio.get(
-            "/portfolio/all?page=1&size=100",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            # Test with different pagination parameters
+            response1 = client_with_portfolio.get(
+                "/portfolio/all?page=1&size=1",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            response2 = client_with_portfolio.get(
+                "/portfolio/all?page=2&size=1",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            response3 = client_with_portfolio.get(
+                "/portfolio/all?page=1&size=100",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response1.status_code == 200
     assert response2.status_code == 200

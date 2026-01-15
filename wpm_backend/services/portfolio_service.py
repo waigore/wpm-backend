@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 from wpm.models import Asset, Position as WPMPosition, Trade as WPMTrade
-from wpm.portfolio import CompositePortfolio, fetch_price_map, get_historical_performance
+from wpm.portfolio import CompositePortfolio, fetch_price_map, get_historical_performance, get_positions_with_allocations
 from wpm.pricing import PriceService
 
 from wpm_backend.models.portfolio import Lot, MatchedSell, PortfolioHistoryPoint, Position, Trade
@@ -33,6 +33,7 @@ VALID_SORT_FIELDS = {
     "current_price",
     "market_value",
     "unrealized_gain_loss",
+    "allocation_percentage",
 }
 
 # Valid sortable fields for Trade model
@@ -76,18 +77,18 @@ def get_all_positions(
     """
     logger.info("Retrieving all positions from composite portfolio")
 
-    # Get positions from composite portfolio
-    positions_dict = composite.get_positions()
-    logger.info(f"Retrieved {len(positions_dict)} positions from composite portfolio")
-
-    # Fetch current prices
+    # Fetch current prices first (needed for get_positions_with_allocations)
     logger.info("Fetching current prices for all assets")
     price_map = fetch_price_map(composite, price_service)
     logger.info(f"Fetched prices for {len(price_map)} assets")
 
+    # Get positions with allocations from composite portfolio
+    positions_with_allocations = get_positions_with_allocations(composite, price_map)
+    logger.info(f"Retrieved {len(positions_with_allocations)} positions with allocations from composite portfolio")
+
     # Transform wpm Position objects to API Position models
     api_positions = []
-    for asset, wpm_position in positions_dict.items():
+    for asset, (wpm_position, allocation_decimal) in positions_with_allocations.items():
         try:
             # Get current price (may be None)
             current_price = price_map.get(asset)
@@ -108,6 +109,9 @@ def get_all_positions(
             if market_value is not None:
                 unrealized_gain_loss = market_value - float(wpm_position.cost_basis)
 
+            # Convert allocation from Decimal to float
+            allocation_percentage = float(allocation_decimal) if allocation_decimal is not None else None
+
             # Create API Position model
             api_position = Position(
                 ticker=asset.ticker,
@@ -119,6 +123,7 @@ def get_all_positions(
                 current_price=current_price,
                 market_value=market_value,
                 unrealized_gain_loss=unrealized_gain_loss,
+                allocation_percentage=allocation_percentage,
             )
             api_positions.append(api_position)
         except Exception as e:
@@ -163,6 +168,8 @@ def get_all_positions(
             value = position.market_value
         elif sort_by == "unrealized_gain_loss":
             value = position.unrealized_gain_loss
+        elif sort_by == "allocation_percentage":
+            value = position.allocation_percentage
         else:
             value = None
         
