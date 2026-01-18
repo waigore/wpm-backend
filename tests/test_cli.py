@@ -478,3 +478,98 @@ def test_help_includes_lots_command_with_brokers(cli_instance):
     assert "lots" in output.lower()
     assert "brokers" in output.lower()
     assert "quotes" in output.lower() or "names with spaces" in output.lower()
+
+
+def test_portfolio_all_command_displays_totals(cli_instance):
+    """Test portfolio_all_command() displays portfolio totals including realized P/L."""
+    # Setup authentication
+    login_response = cli_instance.client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    cli_instance.token = login_response.json()["access_token"]
+
+    # Mock the API response with all totals
+    mock_response = {
+        "positions": {
+            "items": [],
+            "total": 0,
+            "page": 1,
+            "size": 20,
+            "pages": 0,
+        },
+        "total_cost_basis": 20000.0,
+        "total_market_value": 25050.0,
+        "total_unrealized_gain_loss": 5050.0,
+        "total_realized_gain_loss": 300.0,
+    }
+
+    # Mock the client.get method
+    with patch.object(cli_instance.client, "get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = mock_response
+
+        # Capture output
+        with patch("sys.stdout", new=StringIO()) as fake_out:
+            cli_instance.portfolio_all_command()
+            output = fake_out.getvalue()
+
+        # Verify API was called
+        mock_get.assert_called_once_with(
+            "/portfolio/all",
+            headers={"Authorization": f"Bearer {cli_instance.token}"},
+        )
+
+    # Verify portfolio totals are displayed
+    assert "PORTFOLIO TOTALS" in output
+    assert "Total Cost Basis" in output
+    assert "$20,000.00" in output or "20000.00" in output
+    assert "Total Market Value" in output
+    assert "$25,050.00" in output or "25050.00" in output
+    assert "Total Unrealized P&L" in output
+    assert "+$5,050.00" in output or "+5050.00" in output
+    assert "Total Realized P&L" in output
+    assert "+$300.00" in output or "+300.00" in output
+
+
+def test_portfolio_all_command_displays_negative_realized_pnl(cli_instance):
+    """Test portfolio_all_command() displays negative realized P/L correctly."""
+    # Setup authentication
+    login_response = cli_instance.client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    cli_instance.token = login_response.json()["access_token"]
+
+    # Mock the API response with negative realized P/L
+    mock_response = {
+        "positions": {
+            "items": [],
+            "total": 0,
+            "page": 1,
+            "size": 20,
+            "pages": 0,
+        },
+        "total_cost_basis": 20000.0,
+        "total_market_value": 25050.0,
+        "total_unrealized_gain_loss": 5050.0,
+        "total_realized_gain_loss": -500.0,
+    }
+
+    # Mock the client.get method
+    with patch.object(cli_instance.client, "get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = mock_response
+
+        # Capture output
+        with patch("sys.stdout", new=StringIO()) as fake_out:
+            cli_instance.portfolio_all_command()
+            output = fake_out.getvalue()
+
+    # Verify negative realized P/L is displayed (no + sign)
+    assert "Total Realized P&L" in output
+    assert "-$500.00" in output or "-500.00" in output
+    # Verify no + sign before negative value
+    assert "+-$500.00" not in output

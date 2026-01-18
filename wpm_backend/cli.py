@@ -111,6 +111,14 @@ class InteractiveCLI:
                 else:
                     print("Total Unrealized P&L: N/A (prices unavailable)")
                 
+                # Format total_realized_gain_loss (always available, unlike unrealized)
+                total_realized_gain_loss = data.get("total_realized_gain_loss")
+                if total_realized_gain_loss is not None:
+                    sign = "+" if total_realized_gain_loss >= 0 else ""
+                    print(f"Total Realized P&L: {sign}${total_realized_gain_loss:,.2f}")
+                else:
+                    print("Total Realized P&L: N/A")
+                
                 print("=" * 60)
                 print()
                 

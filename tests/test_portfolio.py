@@ -29,6 +29,12 @@ def test_get_all_positions_service(mock_composite_portfolio, mock_price_service)
         assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("29.94")),
     }
 
+    # Mock get_asset_realized_pnl for each asset
+    mock_composite_portfolio.get_asset_realized_pnl = lambda ticker: {
+        "AAPL": 500.0,
+        "GOOGL": -200.0,
+    }.get(ticker, 0.0)
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
             positions = get_all_positions(mock_composite_portfolio, mock_price_service)
@@ -46,6 +52,7 @@ def test_get_all_positions_service(mock_composite_portfolio, mock_price_service)
     assert position1.market_value == 17550.0  # 100 * 175.50
     assert position1.unrealized_gain_loss == 2550.0  # 17550 - 15000
     assert position1.allocation_percentage == 70.06
+    assert position1.realized_gain_loss == 500.0
 
     # Check second position (GOOGL)
     position2 = positions[1]
@@ -58,6 +65,7 @@ def test_get_all_positions_service(mock_composite_portfolio, mock_price_service)
     assert position2.market_value == 7500.0  # 50 * 150.00
     assert position2.unrealized_gain_loss == 2500.0  # 7500 - 5000
     assert position2.allocation_percentage == 29.94
+    assert position2.realized_gain_loss == -200.0
 
 
 def test_get_all_positions_without_prices(mock_composite_portfolio, mock_price_service):
@@ -81,12 +89,20 @@ def test_get_all_positions_without_prices(mock_composite_portfolio, mock_price_s
 
     assert len(positions) == 2
 
+    # Mock get_asset_realized_pnl for each asset
+    mock_composite_portfolio.get_asset_realized_pnl = lambda ticker: {
+        "AAPL": 100.0,
+        "GOOGL": 50.0,
+    }.get(ticker, 0.0)
+
     # Check that market_value and unrealized_gain_loss are None
     for position in positions:
         assert position.current_price is None
         assert position.market_value is None
         assert position.unrealized_gain_loss is None
         assert position.allocation_percentage == 0.00
+        # Realized P/L should still be available (doesn't require prices)
+        assert position.realized_gain_loss is not None
 
 
 def test_get_all_positions_partial_prices(mock_composite_portfolio, mock_price_service):
@@ -149,6 +165,7 @@ def test_portfolio_all_endpoint(client_with_portfolio, test_settings):
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     # Mock get_positions_with_allocations
     positions_with_allocations = {
@@ -171,6 +188,7 @@ def test_portfolio_all_endpoint(client_with_portfolio, test_settings):
     assert "total_market_value" in data
     assert "total_cost_basis" in data
     assert "total_unrealized_gain_loss" in data
+    assert "total_realized_gain_loss" in data
     
     # Check positions (paginated)
     positions = data["positions"]
@@ -195,6 +213,12 @@ def test_portfolio_all_endpoint(client_with_portfolio, test_settings):
     assert data["total_cost_basis"] == 20000.0
     assert data["total_market_value"] == 25050.0
     assert data["total_unrealized_gain_loss"] == 5050.0
+    assert data["total_realized_gain_loss"] == 300.0
+    
+    # Check that realized_gain_loss is present in position items
+    for item in positions["items"]:
+        assert "realized_gain_loss" in item
+        assert item["realized_gain_loss"] is not None
 
 
 def test_portfolio_all_endpoint_no_portfolio(client, test_settings):
@@ -315,6 +339,12 @@ def test_get_all_positions_sorting_service(mock_composite_portfolio, mock_price_
         assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("29.94")),
     }
 
+    # Mock get_asset_realized_pnl
+    mock_composite_portfolio.get_asset_realized_pnl = lambda ticker: {
+        "AAPL": 500.0,
+        "GOOGL": -200.0,
+    }.get(ticker, 0.0)
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
             # Test sorting by ticker descending
@@ -342,6 +372,12 @@ def test_get_all_positions_sorting_by_allocation_percentage(mock_composite_portf
         assets[0]: (mock_composite_portfolio.get_positions()[assets[0]], Decimal("70.06")),
         assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("29.94")),
     }
+
+    # Mock get_asset_realized_pnl
+    mock_composite_portfolio.get_asset_realized_pnl = lambda ticker: {
+        "AAPL": 500.0,
+        "GOOGL": -200.0,
+    }.get(ticker, 0.0)
 
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
@@ -385,6 +421,12 @@ def test_get_all_positions_sorting_allocation_percentage_with_none(mock_composit
         assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("0.00")),
     }
 
+    # Mock get_asset_realized_pnl
+    mock_composite_portfolio.get_asset_realized_pnl = lambda ticker: {
+        "AAPL": 500.0,
+        "GOOGL": -200.0,
+    }.get(ticker, 0.0)
+
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
             # Test sorting by allocation_percentage ascending (None should come first)
@@ -407,6 +449,52 @@ def test_get_all_positions_sorting_allocation_percentage_with_none(mock_composit
     # Descending: 100.00 should come first, then 0.00
     assert positions_desc[0].allocation_percentage == 100.00
     assert positions_desc[1].allocation_percentage == 0.00
+
+
+def test_get_all_positions_sorting_by_realized_gain_loss(mock_composite_portfolio, mock_price_service):
+    """Test get_all_positions() sorting by realized_gain_loss."""
+    from wpm.models import Asset
+
+    assets = list(mock_composite_portfolio.get_positions().keys())
+    mock_price_map = {
+        assets[0]: 175.50,  # AAPL price
+        assets[1]: 150.00,  # GOOGL price
+    }
+
+    # Mock get_positions_with_allocations
+    positions_with_allocations = {
+        assets[0]: (mock_composite_portfolio.get_positions()[assets[0]], Decimal("70.06")),
+        assets[1]: (mock_composite_portfolio.get_positions()[assets[1]], Decimal("29.94")),
+    }
+
+    # Mock get_asset_realized_pnl - AAPL has higher realized P/L
+    mock_composite_portfolio.get_asset_realized_pnl = lambda ticker: {
+        "AAPL": 500.0,
+        "GOOGL": -200.0,
+    }.get(ticker, 0.0)
+
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        with patch("wpm_backend.services.portfolio_service.get_positions_with_allocations", return_value=positions_with_allocations):
+            # Sort ascending by realized_gain_loss
+            positions_asc = get_all_positions(
+                mock_composite_portfolio, mock_price_service, sort_by="realized_gain_loss", sort_order="asc"
+            )
+            # Sort descending by realized_gain_loss
+            positions_desc = get_all_positions(
+                mock_composite_portfolio, mock_price_service, sort_by="realized_gain_loss", sort_order="desc"
+            )
+
+    # Ascending: GOOGL (-200.0) should come before AAPL (500.0)
+    assert positions_asc[0].ticker == "GOOGL"
+    assert positions_asc[0].realized_gain_loss == -200.0
+    assert positions_asc[1].ticker == "AAPL"
+    assert positions_asc[1].realized_gain_loss == 500.0
+
+    # Descending: AAPL (500.0) should come before GOOGL (-200.0)
+    assert positions_desc[0].ticker == "AAPL"
+    assert positions_desc[0].realized_gain_loss == 500.0
+    assert positions_desc[1].ticker == "GOOGL"
+    assert positions_desc[1].realized_gain_loss == -200.0
 
 
 def test_get_all_positions_sorting_invalid_field(mock_composite_portfolio, mock_price_service):
@@ -493,6 +581,7 @@ def test_portfolio_pagination_default_page_size(client_with_portfolio, test_sett
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         response = client_with_portfolio.get(
@@ -526,6 +615,7 @@ def test_portfolio_pagination_custom_page_size(client_with_portfolio, test_setti
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     # Mock get_positions_with_allocations
     positions_with_allocations = {
@@ -569,6 +659,7 @@ def test_portfolio_pagination_page_navigation(client_with_portfolio, test_settin
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     # Mock get_positions_with_allocations
     positions_with_allocations = {
@@ -623,6 +714,7 @@ def test_portfolio_pagination_page_beyond_total(client_with_portfolio, test_sett
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
         response = client_with_portfolio.get(
@@ -682,6 +774,7 @@ def test_portfolio_sorting_by_ticker_asc(client_with_portfolio, test_settings):
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     # Mock get_positions_with_allocations
     positions_with_allocations = {
@@ -723,6 +816,7 @@ def test_portfolio_sorting_by_ticker_desc(client_with_portfolio, test_settings):
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     # Mock get_positions_with_allocations
     positions_with_allocations = {
@@ -764,6 +858,7 @@ def test_portfolio_sorting_by_quantity(client_with_portfolio, test_settings):
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     # Mock get_positions_with_allocations
     positions_with_allocations = {
@@ -805,6 +900,7 @@ def test_portfolio_sorting_by_cost_basis(client_with_portfolio, test_settings):
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     # Mock get_positions_with_allocations
     positions_with_allocations = {
@@ -846,6 +942,7 @@ def test_portfolio_sorting_by_allocation_percentage(client_with_portfolio, test_
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     # Mock get_positions_with_allocations
     # AAPL: 70.06%, GOOGL: 29.94%
@@ -907,6 +1004,7 @@ def test_portfolio_sorting_default_ticker_asc(client_with_portfolio, test_settin
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     # Mock get_positions_with_allocations
     positions_with_allocations = {
@@ -972,6 +1070,7 @@ def test_portfolio_sorting_all_fields(client_with_portfolio, test_settings):
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     valid_fields = [
         "ticker",
@@ -1065,6 +1164,7 @@ def test_portfolio_pagination_and_sorting(client_with_portfolio, test_settings):
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     # Mock get_positions_with_allocations
     positions_with_allocations = {
@@ -1110,6 +1210,11 @@ def test_portfolio_all_endpoint_with_totals(client_with_portfolio, test_settings
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
+    portfolio.get_asset_realized_pnl = lambda ticker: {
+        assets[0].ticker: 500.0,
+        assets[1].ticker: -200.0,
+    }.get(ticker, 0.0)
 
     # Mock get_positions_with_allocations
     positions_with_allocations = {
@@ -1132,11 +1237,13 @@ def test_portfolio_all_endpoint_with_totals(client_with_portfolio, test_settings
     assert "total_market_value" in data
     assert "total_cost_basis" in data
     assert "total_unrealized_gain_loss" in data
+    assert "total_realized_gain_loss" in data
     
     # Verify totals match mocked values
     assert data["total_cost_basis"] == 20000.0
     assert data["total_market_value"] == 25050.0
     assert data["total_unrealized_gain_loss"] == 5050.0
+    assert data["total_realized_gain_loss"] == 300.0
 
 
 def test_portfolio_all_endpoint_totals_with_none_values(client_with_portfolio, test_settings):
@@ -1158,6 +1265,7 @@ def test_portfolio_all_endpoint_totals_with_none_values(client_with_portfolio, t
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: None
     portfolio.get_total_unrealized_pnl = lambda prices: None
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     # Mock get_positions_with_allocations - when no prices, allocations are 0.00
     positions_with_allocations = {
@@ -1202,6 +1310,7 @@ def test_portfolio_totals_pagination_independence(client_with_portfolio, test_se
     portfolio.get_total_cost_basis = lambda: 20000.0
     portfolio.get_total_market_value = lambda prices: 25050.0
     portfolio.get_total_unrealized_pnl = lambda prices: 5050.0
+    portfolio.get_total_realized_pnl = lambda: 300.0
 
     # Mock get_positions_with_allocations
     positions_with_allocations = {

@@ -36,6 +36,7 @@ VALID_SORT_FIELDS = {
     "market_value",
     "unrealized_gain_loss",
     "allocation_percentage",
+    "realized_gain_loss",
 }
 
 # Valid sortable fields for Trade model
@@ -114,6 +115,9 @@ def get_all_positions(
             # Convert allocation from Decimal to float
             allocation_percentage = float(allocation_decimal) if allocation_decimal is not None else None
 
+            # Get realized P/L for this asset
+            realized_gain_loss = composite.get_asset_realized_pnl(asset.ticker)
+
             # Create API Position model
             api_position = Position(
                 ticker=asset.ticker,
@@ -126,6 +130,7 @@ def get_all_positions(
                 market_value=market_value,
                 unrealized_gain_loss=unrealized_gain_loss,
                 allocation_percentage=allocation_percentage,
+                realized_gain_loss=realized_gain_loss,
             )
             api_positions.append(api_position)
         except Exception as e:
@@ -172,6 +177,8 @@ def get_all_positions(
             value = position.unrealized_gain_loss
         elif sort_by == "allocation_percentage":
             value = position.allocation_percentage
+        elif sort_by == "realized_gain_loss":
+            value = position.realized_gain_loss
         else:
             value = None
         

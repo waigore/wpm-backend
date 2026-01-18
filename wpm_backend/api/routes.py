@@ -247,13 +247,15 @@ def get_all_positions_endpoint(
         total_cost_basis = composite_portfolio.get_total_cost_basis()
         total_market_value = composite_portfolio.get_total_market_value(price_map)
         total_unrealized_gain_loss = composite_portfolio.get_total_unrealized_pnl(price_map)
+        total_realized_gain_loss = composite_portfolio.get_total_realized_pnl()
 
         logger.info(
             f"Portfolio response sent to user: {username}, "
             f"total={paginated_result.total}, page={paginated_result.page}, "
             f"size={paginated_result.size}, pages={paginated_result.pages}, "
             f"total_cost_basis={total_cost_basis}, total_market_value={total_market_value}, "
-            f"total_unrealized_gain_loss={total_unrealized_gain_loss}"
+            f"total_unrealized_gain_loss={total_unrealized_gain_loss}, "
+            f"total_realized_gain_loss={total_realized_gain_loss}"
         )
 
         return PortfolioAllResponse(
@@ -261,6 +263,7 @@ def get_all_positions_endpoint(
             total_market_value=total_market_value,
             total_cost_basis=total_cost_basis,
             total_unrealized_gain_loss=total_unrealized_gain_loss,
+            total_realized_gain_loss=total_realized_gain_loss,
         )
     except ValueError as e:
         # Handle invalid sort_by from service layer
