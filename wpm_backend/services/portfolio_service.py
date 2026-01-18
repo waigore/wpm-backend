@@ -1,6 +1,7 @@
 """Business logic for portfolio operations, wraps wpm library calls."""
 
 import logging
+from decimal import Decimal
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -9,7 +10,7 @@ from wpm.models import Asset, Position as WPMPosition, Trade as WPMTrade
 from wpm.portfolio import CompositePortfolio, fetch_price_map, get_historical_performance, get_positions_with_allocations
 from wpm.pricing import PriceService
 
-from wpm_backend.models.portfolio import Lot, MatchedSell, PortfolioHistoryPoint, Position, Trade
+from wpm_backend.models.portfolio import BrokerPosition, Lot, MatchedSell, OverallPosition, PortfolioHistoryPoint, Position, Trade
 from wpm_backend.services.portfolio_utils import (
     _get_month_start_dates,
     _get_weekly_dates,
@@ -331,6 +332,7 @@ def get_asset_lots(
     price_service: PriceService,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    brokers: Optional[List[str]] = None,
     sort_by: Optional[str] = None,
     sort_order: Optional[str] = "asc",
 ) -> List[Lot]:
@@ -343,57 +345,40 @@ def get_asset_lots(
         price_service: PriceService instance for fetching current prices
         start_date: Optional start date for filtering lots (inclusive)
         end_date: Optional end date for filtering lots (inclusive)
+        brokers: Optional list of broker names to filter by
         sort_by: Field name to sort by (default: None, which defaults to "date")
         sort_order: Sort order - "asc" or "desc" (default: "asc")
 
     Returns:
-        Sorted list of Lot API models, filtered by date range if provided
+        Sorted list of Lot API models, filtered by date range and brokers if provided
 
     Raises:
         ValueError: If ticker is not found or invalid, or if sort_by is not a valid Lot field
     """
-    logger.info(f"Retrieving lots for ticker: {ticker}, start_date={start_date}, end_date={end_date}, sort_by={sort_by}, sort_order={sort_order}")
+    logger.info(f"Retrieving lots for ticker: {ticker}, start_date={start_date}, end_date={end_date}, brokers={brokers}, sort_by={sort_by}, sort_order={sort_order}")
 
-    # Get lots from composite portfolio
+    # Fetch current prices for P&L calculations (needed for get_asset_lots with prices parameter)
+    logger.info("Fetching current prices for P&L calculations")
+    price_map = fetch_price_map(composite, price_service)
+    logger.info(f"Fetched prices for {len(price_map)} assets")
+
+    # Get lots from composite portfolio (with broker and date filtering if provided)
     try:
-        wpm_lots = composite.get_asset_lots(ticker)
+        wpm_lots = composite.get_asset_lots(
+            ticker,
+            start_date=start_date,
+            end_date=end_date,
+            brokers=brokers,
+            prices=price_map,
+        )
         logger.info(f"Retrieved {len(wpm_lots)} lots for ticker {ticker}")
     except Exception as e:
         logger.error(f"Error retrieving lots for ticker {ticker}: {e}", exc_info=True)
         raise ValueError(f"Failed to retrieve lots for ticker {ticker}: {e}")
 
-    # Fetch current prices for P&L calculations
-    logger.info("Fetching current prices for P&L calculations")
-    price_map = fetch_price_map(composite, price_service)
-    logger.info(f"Fetched prices for {len(price_map)} assets")
-
-    # Filter by date range if provided
-    filtered_lots = []
-    for wpm_lot in wpm_lots:
-        try:
-            # Get lot date using helper function
-            lot_date = get_lot_date(wpm_lot)
-            if lot_date is None:
-                # If no date found, skip date filtering but still include the lot
-                filtered_lots.append(wpm_lot)
-                continue
-
-            # Apply date filtering
-            if start_date is not None and lot_date < start_date:
-                continue
-            if end_date is not None and lot_date > end_date:
-                continue
-
-            filtered_lots.append(wpm_lot)
-        except Exception as e:
-            logger.warning(f"Error processing lot date for ticker {ticker}: {e}", exc_info=True)
-            continue
-
-    logger.info(f"Filtered to {len(filtered_lots)} lots after date filtering")
-
     # Transform wpm Lot objects to API Lot models
     api_lots = []
-    for wpm_lot in filtered_lots:
+    for wpm_lot in wpm_lots:
         try:
             # Extract lot date using helper function
             lot_date_obj = get_lot_date(wpm_lot)
@@ -569,6 +554,118 @@ def get_asset_lots(
     
     logger.info(f"Sorted {len(sorted_lots)} lots by {sort_by} ({sort_order})")
     return sorted_lots
+
+
+def get_asset_positions_by_broker(
+    composite: CompositePortfolio,
+    ticker: str,
+    price_service: PriceService,
+    brokers: Optional[List[str]] = None,
+) -> tuple[OverallPosition, List[BrokerPosition]]:
+    """
+    Retrieve positions by broker for a specific asset ticker and calculate overall position.
+
+    Args:
+        composite: CompositePortfolio instance from wpm library
+        ticker: Asset ticker symbol to retrieve positions for
+        price_service: PriceService instance for fetching current prices
+        brokers: Optional list of broker names to filter by
+
+    Returns:
+        Tuple of (overall_position: OverallPosition, per_broker_positions: List[BrokerPosition])
+
+    Raises:
+        ValueError: If ticker is not found
+    """
+    logger.info(f"Retrieving positions by broker for ticker: {ticker}, brokers={brokers}")
+
+    # Get positions by broker from composite portfolio
+    try:
+        broker_positions_dict = composite.get_asset_positions_by_broker(ticker)
+        logger.info(f"Retrieved positions for {len(broker_positions_dict)} brokers for ticker {ticker}")
+    except Exception as e:
+        logger.error(f"Error retrieving positions by broker for ticker {ticker}: {e}", exc_info=True)
+        raise ValueError(f"Failed to retrieve positions by broker for ticker {ticker}: {e}")
+
+    # Filter by brokers if provided
+    if brokers is not None:
+        filtered_positions_dict = {
+            broker: position
+            for broker, position in broker_positions_dict.items()
+            if broker in brokers
+        }
+        broker_positions_dict = filtered_positions_dict
+        logger.info(f"Filtered to {len(broker_positions_dict)} brokers after filtering")
+
+    # Fetch current prices for market value calculations
+    logger.info("Fetching current prices for market value calculations")
+    price_map = fetch_price_map(composite, price_service)
+    logger.info(f"Fetched prices for {len(price_map)} assets")
+
+    # Transform wpm Position objects to BrokerPosition API models
+    per_broker_positions = []
+    # Use Decimal for precise quantity calculations, convert to float only at the end
+    total_quantity_decimal = Decimal("0")
+    total_cost_basis_decimal = Decimal("0")
+    total_market_value: Optional[float] = None
+
+    for broker_name, wpm_position in broker_positions_dict.items():
+        try:
+            # Keep quantity as Decimal for precise calculations
+            quantity_decimal = wpm_position.quantity if isinstance(wpm_position.quantity, Decimal) else Decimal(str(wpm_position.quantity))
+            cost_basis_decimal = Decimal(str(wpm_position.cost_basis))
+
+            # Convert to float only for BrokerPosition model (individual broker quantities)
+            quantity = float(quantity_decimal)
+            cost_basis = float(cost_basis_decimal)
+
+            # Get current price for this position's asset
+            current_price = price_map.get(wpm_position.asset)
+
+            # Calculate market_value (quantity * current_price) if price available
+            market_value = None
+            if current_price is not None:
+                market_value = quantity * current_price
+
+            # Create BrokerPosition model
+            broker_position = BrokerPosition(
+                broker=broker_name,
+                quantity=quantity,
+                cost_basis=cost_basis,
+                market_value=market_value,
+            )
+            per_broker_positions.append(broker_position)
+
+            # Aggregate overall position using Decimal for precision
+            total_quantity_decimal += quantity_decimal
+            total_cost_basis_decimal += cost_basis_decimal
+            if market_value is not None:
+                if total_market_value is None:
+                    total_market_value = 0.0
+                total_market_value += market_value
+
+        except Exception as e:
+            logger.warning(f"Error processing position for broker {broker_name}, ticker {ticker}: {e}", exc_info=True)
+            continue
+
+    # Convert Decimal to float only at the end for OverallPosition model
+    total_quantity = float(total_quantity_decimal)
+    total_cost_basis = float(total_cost_basis_decimal)
+
+    # Create OverallPosition model
+    overall_position = OverallPosition(
+        quantity=total_quantity,
+        cost_basis=total_cost_basis,
+        market_value=total_market_value,
+    )
+
+    logger.info(
+        f"Calculated positions for ticker {ticker}: "
+        f"overall qty={total_quantity}, cost_basis={total_cost_basis}, "
+        f"market_value={total_market_value}, brokers={len(per_broker_positions)}"
+    )
+
+    return overall_position, per_broker_positions
 
 
 def get_cached_portfolio_performance(
@@ -862,3 +959,37 @@ def get_all_asset_metadata(
 
     logger.info(f"Retrieved metadata for {len(all_metadata)} tickers total")
     return all_metadata
+
+
+def get_asset_brokers(
+    composite: CompositePortfolio,
+    ticker: str,
+) -> List[str]:
+    """
+    Retrieve list of broker names that have positions for a specific asset ticker.
+
+    Args:
+        composite: CompositePortfolio instance from wpm library
+        ticker: Asset ticker symbol to retrieve brokers for
+
+    Returns:
+        List of broker names (strings). Returns empty list if ticker exists but has no positions.
+
+    Raises:
+        ValueError: If ticker is not found
+    """
+    logger.info(f"Retrieving brokers for ticker: {ticker}")
+
+    # Get positions by broker from composite portfolio
+    try:
+        broker_positions_dict = composite.get_asset_positions_by_broker(ticker)
+        logger.info(f"Retrieved positions for {len(broker_positions_dict)} brokers for ticker {ticker}")
+    except Exception as e:
+        logger.error(f"Error retrieving brokers for ticker {ticker}: {e}", exc_info=True)
+        raise ValueError(f"Failed to retrieve brokers for ticker {ticker}: {e}")
+
+    # Extract broker names from dictionary keys
+    broker_names = list(broker_positions_dict.keys())
+    
+    logger.info(f"Found {len(broker_names)} brokers for ticker {ticker}: {broker_names}")
+    return broker_names

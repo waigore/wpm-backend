@@ -3,10 +3,12 @@
 import asyncio
 import json
 import logging
+import shlex
 import sys
 from datetime import date
 from getpass import getpass
 from typing import List, Optional
+from urllib.parse import quote_plus
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -192,16 +194,22 @@ class InteractiveCLI:
         except Exception as e:
             print(f"Error: Failed to connect to API: {e}")
 
-    def lots_command(self, ticker: str) -> None:
-        """Call /portfolio/lots/{ticker} endpoint and display results with paginated lots."""
+    def lots_command(self, ticker: str, brokers: Optional[str] = None) -> None:
+        """Call /portfolio/lots/{ticker} endpoint and display results with paginated lots, overall position, and per-broker positions."""
         if not self.token:
             print("Error: Not logged in. Please run 'login' first.")
             return
 
+        # Build URL with optional brokers query parameter
+        url = f"/portfolio/lots/{ticker}"
+        if brokers:
+            # URL-encode brokers parameter to handle special characters
+            url += f"?brokers={quote_plus(brokers)}"
+
         # Call portfolio/lots/{ticker} endpoint with authentication
         try:
             response = self.client.get(
-                f"/portfolio/lots/{ticker}",
+                url,
                 headers={"Authorization": f"Bearer {self.token}"},
             )
 
@@ -213,6 +221,20 @@ class InteractiveCLI:
                 print("\nLOTS (Paginated)")
                 print("-" * 60)
                 print(json.dumps(lots_data, indent=2))
+                
+                # Display overall position
+                overall_position = data.get("overall_position")
+                if overall_position:
+                    print("\nOVERALL POSITION")
+                    print("-" * 60)
+                    print(json.dumps(overall_position, indent=2))
+                
+                # Display per-broker positions
+                per_broker_positions = data.get("per_broker_positions", [])
+                if per_broker_positions:
+                    print("\nPER-BROKER POSITIONS")
+                    print("-" * 60)
+                    print(json.dumps(per_broker_positions, indent=2))
             elif response.status_code == 401:
                 print("Error: Authentication failed. Token may be expired. Please run 'login' again.")
                 self.token = None  # Clear invalid token
@@ -400,7 +422,7 @@ class InteractiveCLI:
         print("  login           - Login with username/password (required for protected endpoints)")
         print("  portfolio all   - Get all portfolio positions (requires login)")
         print("  trades <ticker> - Get all trades for an asset ticker (requires login)")
-        print("  lots <ticker>   - Get all lots for an asset ticker (requires login)")
+        print("  lots <ticker> [brokers] - Get all lots for an asset ticker, optionally filtered by brokers (comma-separated, use quotes for names with spaces) (requires login)")
         print("  metadata <ticker1> [ticker2] ... - Get metadata for one or more asset tickers (requires login)")
         print("  performance [YYYY-MM-DD] [granularity] - Get portfolio performance up to date (requires login, defaults to today, optional granularity: daily/weekly/monthly)")
         print("  status          - Check application status (portfolio data, services)")
@@ -420,8 +442,12 @@ class InteractiveCLI:
                 if not command:
                     continue
 
-                # Parse command (simple string splitting)
-                parts = command.split()
+                # Parse command using shlex.split() to handle quoted strings properly
+                try:
+                    parts = shlex.split(command)
+                except ValueError:
+                    # If quote parsing fails, fall back to simple split
+                    parts = command.split()
                 cmd = parts[0].lower()
 
                 if cmd in ("exit", "quit"):
@@ -442,9 +468,10 @@ class InteractiveCLI:
                 elif cmd == "lots":
                     if len(parts) > 1:
                         ticker = parts[1]
-                        self.lots_command(ticker)
+                        brokers = parts[2] if len(parts) > 2 else None
+                        self.lots_command(ticker, brokers)
                     else:
-                        print("Error: Ticker is required. Usage: lots <ticker>")
+                        print("Error: Ticker is required. Usage: lots <ticker> [brokers]")
                 elif cmd == "metadata":
                     if len(parts) > 1:
                         tickers = parts[1:]

@@ -15,8 +15,8 @@ from wpm.pricing import PriceService
 from wpm_backend.auth.auth import authenticate_user, create_access_token, verify_token
 from wpm_backend.config import Settings, get_settings
 from wpm_backend.models.auth import LoginRequest, LoginResponse
-from wpm_backend.models.portfolio import AssetMetadataAllResponse, AssetMetadataResponse, PortfolioHistoryPoint, PortfolioPerformanceResponse, Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesResponse
-from wpm_backend.services.portfolio_service import apply_granularity_filter, get_all_asset_metadata, get_all_positions, get_asset_lots, get_asset_metadata, get_asset_trades, get_cached_portfolio_performance, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
+from wpm_backend.models.portfolio import AssetBrokersResponse, AssetMetadataAllResponse, AssetMetadataResponse, PortfolioHistoryPoint, PortfolioPerformanceResponse, Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesResponse
+from wpm_backend.services.portfolio_service import apply_granularity_filter, get_all_asset_metadata, get_all_positions, get_asset_brokers, get_asset_lots, get_asset_metadata, get_asset_positions_by_broker, get_asset_trades, get_cached_portfolio_performance, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -392,11 +392,12 @@ def get_asset_lots_endpoint(
     size: int = Query(20, ge=1, le=100, description="Number of items per page"),
     start_date: Optional[str] = Query(None, description="Start date for filtering (ISO format YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date for filtering (ISO format YYYY-MM-DD)"),
+    brokers: Optional[str] = Query(None, description="Comma-separated list of broker names to filter by"),
     sort_by: Optional[str] = Query("date", description="Field to sort by"),
     sort_order: Optional[str] = Query("asc", pattern="^(asc|desc)$", description="Sort order: 'asc' or 'desc'"),
 ) -> PortfolioAssetLotsResponse:
     """
-    GET endpoint to retrieve all lots for a specific asset ticker with pagination, date filtering, and sorting support.
+    GET endpoint to retrieve all lots for a specific asset ticker with pagination, date filtering, broker filtering, and sorting support.
 
     Requires JWT authentication.
 
@@ -409,11 +410,12 @@ def get_asset_lots_endpoint(
         size: Number of items per page (default: 20, max: 100)
         start_date: Optional start date for filtering lots (ISO format YYYY-MM-DD, inclusive)
         end_date: Optional end date for filtering lots (ISO format YYYY-MM-DD, inclusive)
+        brokers: Optional comma-separated list of broker names to filter by
         sort_by: Field to sort by (default: "date")
         sort_order: Sort order - "asc" or "desc" (default: "asc")
 
     Returns:
-        PortfolioAssetLotsResponse containing paginated list of lots
+        PortfolioAssetLotsResponse containing paginated list of lots, overall position, and per-broker positions
 
     Raises:
         HTTPException: 400 if date format is invalid, start_date > end_date, or sort_by field is invalid
@@ -423,7 +425,7 @@ def get_asset_lots_endpoint(
     logger.info(
         f"Asset lots request received from user: {username}, ticker={ticker}, "
         f"page={page}, size={size}, start_date={start_date}, end_date={end_date}, "
-        f"sort_by={sort_by}, sort_order={sort_order}"
+        f"brokers={brokers}, sort_by={sort_by}, sort_order={sort_order}"
     )
 
     # Parse and validate date parameters
@@ -445,6 +447,13 @@ def get_asset_lots_endpoint(
                 detail=f"start_date ({start_date_obj}) must be less than or equal to end_date ({end_date_obj})",
             )
 
+    # Parse brokers parameter (comma-separated list)
+    brokers_list = None
+    if brokers:
+        brokers_list = [b.strip() for b in brokers.split(",") if b.strip()]
+        if not brokers_list:
+            brokers_list = None
+
     # Validate sort_by parameter
     if sort_by is not None and sort_by not in VALID_LOT_SORT_FIELDS:
         logger.warning(f"Invalid sort_by field requested: {sort_by}")
@@ -454,15 +463,24 @@ def get_asset_lots_endpoint(
         )
 
     try:
-        # Get lots with date filtering and sorting
+        # Get lots with date filtering, broker filtering, and sorting
         lots = get_asset_lots(
             composite_portfolio,
             ticker,
             price_service,
             start_date=start_date_obj,
             end_date=end_date_obj,
+            brokers=brokers_list,
             sort_by=sort_by,
             sort_order=sort_order,
+        )
+
+        # Get positions by broker (with broker filtering if provided)
+        overall_position, per_broker_positions = get_asset_positions_by_broker(
+            composite_portfolio,
+            ticker,
+            price_service,
+            brokers=brokers_list,
         )
 
         # Apply pagination
@@ -471,10 +489,16 @@ def get_asset_lots_endpoint(
         logger.info(
             f"Asset lots response sent to user: {username}, ticker={ticker}, "
             f"total={paginated_result.total}, page={paginated_result.page}, "
-            f"size={paginated_result.size}, pages={paginated_result.pages}"
+            f"size={paginated_result.size}, pages={paginated_result.pages}, "
+            f"brokers={brokers_list}, overall_qty={overall_position.quantity}, "
+            f"broker_positions={len(per_broker_positions)}"
         )
 
-        return PortfolioAssetLotsResponse(lots=paginated_result)
+        return PortfolioAssetLotsResponse(
+            lots=paginated_result,
+            overall_position=overall_position,
+            per_broker_positions=per_broker_positions,
+        )
     except ValueError as e:
         # Handle ticker not found, invalid sort_by, or other value errors
         logger.warning(f"Error retrieving lots for ticker {ticker}: {e}")
@@ -785,5 +809,60 @@ def get_asset_metadata_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error while retrieving metadata for ticker {ticker}",
+        )
+
+
+@router.get("/asset/brokers/{ticker}", response_model=AssetBrokersResponse)
+def get_asset_brokers_endpoint(
+    ticker: str,
+    username: str = Depends(get_current_user),
+    composite_portfolio: CompositePortfolio = Depends(get_composite_portfolio),
+) -> AssetBrokersResponse:
+    """
+    GET endpoint to retrieve list of broker names that have positions for a specific asset ticker.
+
+    Requires JWT authentication.
+
+    Args:
+        ticker: Asset ticker symbol
+        username: Authenticated username (from token)
+        composite_portfolio: Composite portfolio instance (injected via dependency)
+
+    Returns:
+        AssetBrokersResponse containing ticker and list of broker names
+
+    Raises:
+        HTTPException: 404 if ticker is not found in portfolio
+        HTTPException: 500 if portfolio data is not available
+    """
+    logger.info(
+        f"Asset brokers request received from user: {username}, ticker={ticker}"
+    )
+
+    try:
+        # Get brokers from service layer
+        brokers = get_asset_brokers(
+            composite_portfolio,
+            ticker,
+        )
+
+        logger.info(
+            f"Asset brokers response sent to user: {username}, ticker={ticker}, "
+            f"brokers_count={len(brokers)}"
+        )
+
+        return AssetBrokersResponse(ticker=ticker, brokers=brokers)
+    except ValueError as e:
+        # Handle ticker not found
+        logger.warning(f"Error retrieving brokers for ticker {ticker}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving brokers for ticker {ticker}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error while retrieving brokers for ticker {ticker}",
         )
 

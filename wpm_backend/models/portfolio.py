@@ -99,10 +99,33 @@ class Lot(BaseModel):
     total_pnl: Optional[float] = Field(None, description="Total profit or loss (realized + unrealized) in USD")
 
 
+class BrokerPosition(BaseModel):
+    """Model representing a single broker position for an asset."""
+
+    broker: str = Field(..., description="Broker name")
+    quantity: float = Field(..., ge=0, description="Position quantity for this broker")
+    cost_basis: float = Field(..., ge=0, description="Cost basis for this broker in USD")
+    market_value: Optional[float] = Field(
+        None, description="Market value for this broker in USD (None if price unavailable)"
+    )
+
+
+class OverallPosition(BaseModel):
+    """Model representing the overall position for an asset across brokers."""
+
+    quantity: float = Field(..., ge=0, description="Total quantity across all brokers (or filtered brokers)")
+    cost_basis: float = Field(..., ge=0, description="Total cost basis in USD")
+    market_value: Optional[float] = Field(
+        None, description="Total market value in USD (None if price unavailable)"
+    )
+
+
 class PortfolioAssetLotsResponse(BaseModel):
-    """Response model for /portfolio/lots/<ticker> endpoint with paginated lots."""
+    """Response model for /portfolio/lots/<ticker> endpoint with paginated lots and position data."""
 
     lots: Page[Lot] = Field(..., description="Paginated list of lots")
+    overall_position: OverallPosition = Field(..., description="Overall asset position aggregated from brokers")
+    per_broker_positions: list[BrokerPosition] = Field(..., description="Per-broker positions")
 
 
 class PortfolioHistoryPoint(BaseModel):
@@ -131,4 +154,11 @@ class AssetMetadataAllResponse(BaseModel):
     """Response model for /asset/metadata/all endpoint with metadata for all tickers."""
 
     metadata: Dict[str, Optional[Dict[str, Any]]] = Field(..., description="Dictionary mapping ticker to metadata dict (None if retrieval fails for that ticker)")
+
+
+class AssetBrokersResponse(BaseModel):
+    """Response model for /asset/brokers/{ticker} endpoint with list of broker names."""
+
+    ticker: str = Field(..., description="Asset ticker symbol")
+    brokers: list[str] = Field(..., description="List of broker names that have positions for this ticker")
 

@@ -297,7 +297,7 @@
     "/portfolio/lots/{ticker}": {
       "get": {
         "summary": "Get Asset Lots Endpoint",
-        "description": "GET endpoint to retrieve all lots for a specific asset ticker with pagination, date filtering, and sorting support.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n    page: Page number (1-indexed, default: 1)\n    size: Number of items per page (default: 20, max: 100)\n    start_date: Optional start date for filtering lots (ISO format YYYY-MM-DD, inclusive)\n    end_date: Optional end date for filtering lots (ISO format YYYY-MM-DD, inclusive)\n    sort_by: Field to sort by (default: \"date\")\n    sort_order: Sort order - \"asc\" or \"desc\" (default: \"asc\")\n\nReturns:\n    PortfolioAssetLotsResponse containing paginated list of lots\n\nRaises:\n    HTTPException: 400 if date format is invalid, start_date > end_date, or sort_by field is invalid\n    HTTPException: 404 if ticker is not found\n    HTTPException: 500 if portfolio data is not available",
+        "description": "GET endpoint to retrieve all lots for a specific asset ticker with pagination, date filtering, broker filtering, and sorting support.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n    page: Page number (1-indexed, default: 1)\n    size: Number of items per page (default: 20, max: 100)\n    start_date: Optional start date for filtering lots (ISO format YYYY-MM-DD, inclusive)\n    end_date: Optional end date for filtering lots (ISO format YYYY-MM-DD, inclusive)\n    brokers: Optional comma-separated list of broker names to filter by\n    sort_by: Field to sort by (default: \"date\")\n    sort_order: Sort order - \"asc\" or \"desc\" (default: \"asc\")\n\nReturns:\n    PortfolioAssetLotsResponse containing paginated list of lots, overall position, and per-broker positions\n\nRaises:\n    HTTPException: 400 if date format is invalid, start_date > end_date, or sort_by field is invalid\n    HTTPException: 404 if ticker is not found\n    HTTPException: 500 if portfolio data is not available",
         "operationId": "get_asset_lots_endpoint_portfolio_lots__ticker__get",
         "security": [
           {
@@ -376,6 +376,24 @@
               "title": "End Date"
             },
             "description": "End date for filtering (ISO format YYYY-MM-DD)"
+          },
+          {
+            "name": "brokers",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated list of broker names to filter by",
+              "title": "Brokers"
+            },
+            "description": "Comma-separated list of broker names to filter by"
           },
           {
             "name": "sort_by",
@@ -594,10 +612,79 @@
           }
         }
       }
+    },
+    "/asset/brokers/{ticker}": {
+      "get": {
+        "summary": "Get Asset Brokers Endpoint",
+        "description": "GET endpoint to retrieve list of broker names that have positions for a specific asset ticker.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n\nReturns:\n    AssetBrokersResponse containing ticker and list of broker names\n\nRaises:\n    HTTPException: 404 if ticker is not found in portfolio\n    HTTPException: 500 if portfolio data is not available",
+        "operationId": "get_asset_brokers_endpoint_asset_brokers__ticker__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticker"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetBrokersResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AssetBrokersResponse": {
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "title": "Ticker",
+            "description": "Asset ticker symbol"
+          },
+          "brokers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Brokers",
+            "description": "List of broker names that have positions for this ticker"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticker",
+          "brokers"
+        ],
+        "title": "AssetBrokersResponse",
+        "description": "Response model for /asset/brokers/{ticker} endpoint with list of broker names."
+      },
       "AssetMetadataAllResponse": {
         "properties": {
           "metadata": {
@@ -652,6 +739,47 @@
         ],
         "title": "AssetMetadataResponse",
         "description": "Response model for /asset/metadata/{ticker} endpoint with asset metadata."
+      },
+      "BrokerPosition": {
+        "properties": {
+          "broker": {
+            "type": "string",
+            "title": "Broker",
+            "description": "Broker name"
+          },
+          "quantity": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Quantity",
+            "description": "Position quantity for this broker"
+          },
+          "cost_basis": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Cost Basis",
+            "description": "Cost basis for this broker in USD"
+          },
+          "market_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Value",
+            "description": "Market value for this broker in USD (None if price unavailable)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "broker",
+          "quantity",
+          "cost_basis"
+        ],
+        "title": "BrokerPosition",
+        "description": "Model representing a single broker position for an asset."
       },
       "HTTPValidationError": {
         "properties": {
@@ -829,6 +957,41 @@
         "title": "MatchedSell",
         "description": "Model representing a matched sell with consumed quantity from a lot."
       },
+      "OverallPosition": {
+        "properties": {
+          "quantity": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Quantity",
+            "description": "Total quantity across all brokers (or filtered brokers)"
+          },
+          "cost_basis": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Cost Basis",
+            "description": "Total cost basis in USD"
+          },
+          "market_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Value",
+            "description": "Total market value in USD (None if price unavailable)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "quantity",
+          "cost_basis"
+        ],
+        "title": "OverallPosition",
+        "description": "Model representing the overall position for an asset across brokers."
+      },
       "Page_Lot_": {
         "properties": {
           "items": {
@@ -999,14 +1162,28 @@
           "lots": {
             "$ref": "#/components/schemas/Page_Lot_",
             "description": "Paginated list of lots"
+          },
+          "overall_position": {
+            "$ref": "#/components/schemas/OverallPosition",
+            "description": "Overall asset position aggregated from brokers"
+          },
+          "per_broker_positions": {
+            "items": {
+              "$ref": "#/components/schemas/BrokerPosition"
+            },
+            "type": "array",
+            "title": "Per Broker Positions",
+            "description": "Per-broker positions"
           }
         },
         "type": "object",
         "required": [
-          "lots"
+          "lots",
+          "overall_position",
+          "per_broker_positions"
         ],
         "title": "PortfolioAssetLotsResponse",
-        "description": "Response model for /portfolio/lots/<ticker> endpoint with paginated lots."
+        "description": "Response model for /portfolio/lots/<ticker> endpoint with paginated lots and position data."
       },
       "PortfolioAssetTradesResponse": {
         "properties": {

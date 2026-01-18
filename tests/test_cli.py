@@ -234,3 +234,247 @@ def test_help_includes_metadata_command(cli_instance):
     # Verify metadata command is in help
     assert "metadata" in output.lower()
     assert "ticker" in output.lower()
+
+
+def test_lots_command_without_brokers(cli_instance):
+    """Test lots_command() without brokers parameter."""
+    # Setup authentication
+    login_response = cli_instance.client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    cli_instance.token = login_response.json()["access_token"]
+
+    # Mock the API response
+    mock_response = {
+        "lots": {
+            "items": [],
+            "total": 0,
+            "page": 1,
+            "size": 10,
+            "pages": 0,
+        },
+        "overall_position": {
+            "quantity": 100.0,
+            "cost_basis": 15000.0,
+            "market_value": 17550.0,
+        },
+        "per_broker_positions": [
+            {
+                "broker": "IBKR",
+                "quantity": 50.0,
+                "cost_basis": 7500.0,
+                "market_value": 8775.0,
+            },
+            {
+                "broker": "Futu",
+                "quantity": 50.0,
+                "cost_basis": 7500.0,
+                "market_value": 8775.0,
+            },
+        ],
+    }
+
+    # Mock the client.get method
+    with patch.object(cli_instance.client, "get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = mock_response
+
+        # Capture output
+        with patch("sys.stdout", new=StringIO()) as fake_out:
+            cli_instance.lots_command("AAPL")
+            output = fake_out.getvalue()
+
+        # Verify API called without brokers parameter
+        mock_get.assert_called_once_with(
+            "/portfolio/lots/AAPL",
+            headers={"Authorization": f"Bearer {cli_instance.token}"},
+        )
+
+    # Verify output contains lots, overall_position, and per_broker_positions
+    assert "LOTS (Paginated)" in output
+    assert "OVERALL POSITION" in output
+    assert "PER-BROKER POSITIONS" in output
+    assert "100.0" in output
+    assert "15000.0" in output
+
+
+def test_lots_command_with_single_broker(cli_instance):
+    """Test lots_command() with single broker."""
+    # Setup authentication
+    login_response = cli_instance.client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    cli_instance.token = login_response.json()["access_token"]
+
+    # Mock the API response
+    mock_response = {
+        "lots": {"items": [], "total": 0, "page": 1, "size": 10, "pages": 0},
+        "overall_position": {
+            "quantity": 50.0,
+            "cost_basis": 7500.0,
+            "market_value": 8775.0,
+        },
+        "per_broker_positions": [
+            {
+                "broker": "IBKR",
+                "quantity": 50.0,
+                "cost_basis": 7500.0,
+                "market_value": 8775.0,
+            },
+        ],
+    }
+
+    # Mock the client.get method
+    with patch.object(cli_instance.client, "get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = mock_response
+
+        # Capture output
+        with patch("sys.stdout", new=StringIO()) as fake_out:
+            cli_instance.lots_command("AAPL", "IBKR")
+            output = fake_out.getvalue()
+
+        # Verify API called with brokers parameter (URL-encoded)
+        from urllib.parse import quote_plus
+
+        mock_get.assert_called_once_with(
+            f"/portfolio/lots/AAPL?brokers={quote_plus('IBKR')}",
+            headers={"Authorization": f"Bearer {cli_instance.token}"},
+        )
+
+    # Verify output
+    assert "LOTS (Paginated)" in output
+    assert "OVERALL POSITION" in output
+    assert "PER-BROKER POSITIONS" in output
+
+
+def test_lots_command_with_multiple_brokers(cli_instance):
+    """Test lots_command() with multiple brokers (comma-separated)."""
+    # Setup authentication
+    login_response = cli_instance.client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    cli_instance.token = login_response.json()["access_token"]
+
+    # Mock the API response
+    mock_response = {
+        "lots": {"items": [], "total": 0, "page": 1, "size": 10, "pages": 0},
+        "overall_position": {
+            "quantity": 100.0,
+            "cost_basis": 15000.0,
+            "market_value": 17550.0,
+        },
+        "per_broker_positions": [
+            {"broker": "IBKR", "quantity": 50.0, "cost_basis": 7500.0, "market_value": 8775.0},
+            {"broker": "Futu", "quantity": 50.0, "cost_basis": 7500.0, "market_value": 8775.0},
+        ],
+    }
+
+    # Mock the client.get method
+    with patch.object(cli_instance.client, "get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = mock_response
+
+        # Capture output
+        with patch("sys.stdout", new=StringIO()) as fake_out:
+            cli_instance.lots_command("AAPL", "IBKR,Futu")
+            output = fake_out.getvalue()
+
+        # Verify API called with comma-separated brokers (URL-encoded)
+        from urllib.parse import quote_plus
+
+        mock_get.assert_called_once_with(
+            f"/portfolio/lots/AAPL?brokers={quote_plus('IBKR,Futu')}",
+            headers={"Authorization": f"Bearer {cli_instance.token}"},
+        )
+
+    # Verify output
+    assert "LOTS (Paginated)" in output
+    assert "OVERALL POSITION" in output
+    assert "PER-BROKER POSITIONS" in output
+
+
+def test_lots_command_with_quoted_broker_name(cli_instance):
+    """Test lots_command() with quoted broker name containing spaces."""
+    # Setup authentication
+    login_response = cli_instance.client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    cli_instance.token = login_response.json()["access_token"]
+
+    # Mock the API response
+    mock_response = {
+        "lots": {"items": [], "total": 0, "page": 1, "size": 10, "pages": 0},
+        "overall_position": {
+            "quantity": 50.0,
+            "cost_basis": 7500.0,
+            "market_value": 8775.0,
+        },
+        "per_broker_positions": [
+            {
+                "broker": "Some Broker",
+                "quantity": 50.0,
+                "cost_basis": 7500.0,
+                "market_value": 8775.0,
+            },
+        ],
+    }
+
+    # Mock the client.get method
+    with patch.object(cli_instance.client, "get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = mock_response
+
+        # Capture output
+        with patch("sys.stdout", new=StringIO()) as fake_out:
+            cli_instance.lots_command("AAPL", "Some Broker")
+            output = fake_out.getvalue()
+
+        # Verify API called with URL-encoded broker name (spaces become +)
+        from urllib.parse import quote_plus
+
+        mock_get.assert_called_once_with(
+            f"/portfolio/lots/AAPL?brokers={quote_plus('Some Broker')}",
+            headers={"Authorization": f"Bearer {cli_instance.token}"},
+        )
+
+    # Verify output
+    assert "LOTS (Paginated)" in output
+    assert "OVERALL POSITION" in output
+
+
+def test_lots_command_authentication_error(cli_instance):
+    """Test lots_command() with authentication error (401)."""
+    # Don't set token (not logged in)
+    cli_instance.token = None
+
+    # Capture output
+    with patch("sys.stdout", new=StringIO()) as fake_out:
+        cli_instance.lots_command("AAPL")
+        output = fake_out.getvalue()
+
+    # Verify error message
+    assert "Error" in output
+    assert "Not logged in" in output
+    assert "login" in output.lower()
+
+
+def test_help_includes_lots_command_with_brokers(cli_instance):
+    """Test that help command includes lots command with brokers parameter."""
+    # Capture output
+    with patch("sys.stdout", new=StringIO()) as fake_out:
+        cli_instance.show_help()
+        output = fake_out.getvalue()
+
+    # Verify lots command is in help with brokers parameter
+    assert "lots" in output.lower()
+    assert "brokers" in output.lower()
+    assert "quotes" in output.lower() or "names with spaces" in output.lower()

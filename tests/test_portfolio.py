@@ -2226,7 +2226,20 @@ def test_get_asset_lots_with_date_filtering(mock_composite_portfolio, mock_price
     lot3.get_unrealized_pnl = Mock(return_value=50.0)
     lot3.get_total_pnl = Mock(return_value=50.0)
 
-    mock_composite_portfolio.get_asset_lots.return_value = [lot1, lot2, lot3]
+    # Mock get_asset_lots to return filtered lots when dates are provided
+    def mock_get_asset_lots(ticker, start_date=None, end_date=None, brokers=None, prices=None):
+        all_lots = [lot1, lot2, lot3]
+        filtered = []
+        for lot in all_lots:
+            lot_date = lot.purchase_date
+            if start_date is not None and lot_date < start_date:
+                continue
+            if end_date is not None and lot_date > end_date:
+                continue
+            filtered.append(lot)
+        return filtered
+
+    mock_composite_portfolio.get_asset_lots.side_effect = mock_get_asset_lots
 
     # Mock fetch_price_map
     mock_price_map = {asset: 160.0}
@@ -2559,7 +2572,22 @@ def test_portfolio_asset_lots_endpoint_with_date_filtering(client_with_portfolio
     lot2.get_total_pnl = Mock(return_value=200.0)
 
     portfolio = client_with_portfolio.app.state.composite_portfolio
-    portfolio.get_asset_lots.return_value = [lot1, lot2]
+
+    # Mock get_asset_lots to return filtered lots when dates are provided
+    def mock_get_asset_lots(ticker, start_date=None, end_date=None, brokers=None, prices=None):
+        all_lots = [lot1, lot2]
+        filtered = []
+        for lot in all_lots:
+            lot_date = lot.purchase_date
+            if start_date is not None and lot_date < start_date:
+                continue
+            if end_date is not None and lot_date > end_date:
+                continue
+            filtered.append(lot)
+        return filtered
+
+    portfolio.get_asset_lots.side_effect = mock_get_asset_lots
+    portfolio.get_asset_positions_by_broker.return_value = {}  # Empty positions for date-filtered test
 
     # Mock fetch_price_map
     mock_price_map = {asset: 160.0}
@@ -3044,6 +3072,539 @@ def test_get_asset_lots_broker_field(mock_composite_portfolio, mock_price_servic
     assert lots[0].broker == "Futu"
 
 
+def test_get_asset_lots_with_broker_filtering(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_lots() with broker filtering."""
+    from datetime import date
+    from wpm_backend.services.portfolio_service import get_asset_lots
+    from wpm.models import Asset
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot1 = Mock()
+    lot1.purchase_date = date(2024, 1, 15)
+    lot1.asset = asset
+    lot1.original_quantity = Decimal("100.0")
+    lot1.remaining_quantity = Decimal("100.0")
+    lot1.cost_basis = 15000.0
+    lot1.matched_sells = []
+    lot1.broker = "IBKR"
+    lot1.get_realized_pnl = Mock(return_value=0.0)
+    lot1.get_unrealized_pnl = Mock(return_value=100.0)
+    lot1.get_total_pnl = Mock(return_value=100.0)
+
+    lot2 = Mock()
+    lot2.purchase_date = date(2024, 2, 20)
+    lot2.asset = asset
+    lot2.original_quantity = Decimal("50.0")
+    lot2.remaining_quantity = Decimal("50.0")
+    lot2.cost_basis = 7500.0
+    lot2.matched_sells = []
+    lot2.broker = "Futu"
+    lot2.get_realized_pnl = Mock(return_value=0.0)
+    lot2.get_unrealized_pnl = Mock(return_value=200.0)
+    lot2.get_total_pnl = Mock(return_value=200.0)
+
+    lot3 = Mock()
+    lot3.purchase_date = date(2024, 3, 10)
+    lot3.asset = asset
+    lot3.original_quantity = Decimal("25.0")
+    lot3.remaining_quantity = Decimal("25.0")
+    lot3.cost_basis = 2500.0
+    lot3.matched_sells = []
+    lot3.broker = "IBKR"
+    lot3.get_realized_pnl = Mock(return_value=0.0)
+    lot3.get_unrealized_pnl = Mock(return_value=50.0)
+    lot3.get_total_pnl = Mock(return_value=50.0)
+
+    # Mock get_asset_lots to return filtered lots when brokers parameter is provided
+    def mock_get_asset_lots(ticker, start_date=None, end_date=None, brokers=None, prices=None):
+        all_lots = [lot1, lot2, lot3]
+        if brokers:
+            return [lot for lot in all_lots if lot.broker in brokers]
+        return all_lots
+
+    mock_composite_portfolio.get_asset_lots.side_effect = mock_get_asset_lots
+
+    # Mock fetch_price_map
+    mock_price_map = {asset: 160.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Test without broker filtering
+        all_lots = get_asset_lots(mock_composite_portfolio, "AAPL", mock_price_service)
+        assert len(all_lots) == 3
+
+        # Test with broker filtering (IBKR only)
+        ibkr_lots = get_asset_lots(mock_composite_portfolio, "AAPL", mock_price_service, brokers=["IBKR"])
+        assert len(ibkr_lots) == 2
+        assert all(lot.broker == "IBKR" for lot in ibkr_lots)
+
+        # Test with broker filtering (Futu only)
+        futu_lots = get_asset_lots(mock_composite_portfolio, "AAPL", mock_price_service, brokers=["Futu"])
+        assert len(futu_lots) == 1
+        assert futu_lots[0].broker == "Futu"
+
+        # Test with multiple brokers
+        multi_lots = get_asset_lots(mock_composite_portfolio, "AAPL", mock_price_service, brokers=["IBKR", "Futu"])
+        assert len(multi_lots) == 3
+
+
+def test_get_asset_positions_by_broker(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_positions_by_broker() service function."""
+    from wpm_backend.services.portfolio_service import get_asset_positions_by_broker
+    from wpm.models import Asset, Position as WPMPosition
+
+    # Create mock asset
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    # Create mock positions for different brokers
+    position_ibkr = Mock(spec=WPMPosition)
+    position_ibkr.asset = asset
+    position_ibkr.quantity = Decimal("100.0")
+    position_ibkr.cost_basis = 15000.0
+
+    position_futu = Mock(spec=WPMPosition)
+    position_futu.asset = asset
+    position_futu.quantity = Decimal("50.0")
+    position_futu.cost_basis = 7500.0
+
+    # Mock get_asset_positions_by_broker
+    mock_composite_portfolio.get_asset_positions_by_broker.return_value = {
+        "IBKR": position_ibkr,
+        "Futu": position_futu,
+    }
+
+    # Mock fetch_price_map
+    mock_price_map = {asset: 175.50}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        overall_position, per_broker_positions = get_asset_positions_by_broker(
+            mock_composite_portfolio, "AAPL", mock_price_service
+        )
+
+    # Verify overall position
+    assert overall_position.quantity == 150.0  # 100 + 50
+    assert overall_position.cost_basis == 22500.0  # 15000 + 7500
+    assert overall_position.market_value == 26325.0  # (100 * 175.50) + (50 * 175.50) = 17550.0 + 8775.0
+
+    # Verify per-broker positions
+    assert len(per_broker_positions) == 2
+    broker_dict = {bp.broker: bp for bp in per_broker_positions}
+    
+    ibkr_pos = broker_dict["IBKR"]
+    assert ibkr_pos.quantity == 100.0
+    assert ibkr_pos.cost_basis == 15000.0
+    assert ibkr_pos.market_value == 17550.0  # 100 * 175.50
+
+    futu_pos = broker_dict["Futu"]
+    assert futu_pos.quantity == 50.0
+    assert futu_pos.cost_basis == 7500.0
+    assert futu_pos.market_value == 8775.0  # 50 * 175.50
+
+
+def test_get_asset_positions_by_broker_with_filtering(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_positions_by_broker() with broker filtering."""
+    from wpm_backend.services.portfolio_service import get_asset_positions_by_broker
+    from wpm.models import Asset, Position as WPMPosition
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    position_ibkr = Mock(spec=WPMPosition)
+    position_ibkr.asset = asset
+    position_ibkr.quantity = Decimal("100.0")
+    position_ibkr.cost_basis = 15000.0
+
+    position_futu = Mock(spec=WPMPosition)
+    position_futu.asset = asset
+    position_futu.quantity = Decimal("50.0")
+    position_futu.cost_basis = 7500.0
+
+    position_crypto = Mock(spec=WPMPosition)
+    position_crypto.asset = asset
+    position_crypto.quantity = Decimal("25.0")
+    position_crypto.cost_basis = 2500.0
+
+    mock_composite_portfolio.get_asset_positions_by_broker.return_value = {
+        "IBKR": position_ibkr,
+        "Futu": position_futu,
+        "Crypto": position_crypto,
+    }
+
+    mock_price_map = {asset: 160.0}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Test with broker filtering (IBKR only)
+        overall_position, per_broker_positions = get_asset_positions_by_broker(
+            mock_composite_portfolio, "AAPL", mock_price_service, brokers=["IBKR"]
+        )
+
+    # Verify filtered results
+    assert overall_position.quantity == 100.0
+    assert overall_position.cost_basis == 15000.0
+    assert overall_position.market_value == 16000.0  # 100 * 160.0
+
+    assert len(per_broker_positions) == 1
+    assert per_broker_positions[0].broker == "IBKR"
+    assert per_broker_positions[0].quantity == 100.0
+
+
+def test_get_asset_positions_by_broker_missing_price(mock_composite_portfolio, mock_price_service):
+    """Test get_asset_positions_by_broker() when price is unavailable."""
+    from wpm_backend.services.portfolio_service import get_asset_positions_by_broker
+    from wpm.models import Asset, Position as WPMPosition
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    position = Mock(spec=WPMPosition)
+    position.asset = asset
+    position.quantity = Decimal("100.0")
+    position.cost_basis = 15000.0
+
+    mock_composite_portfolio.get_asset_positions_by_broker.return_value = {"IBKR": position}
+
+    # Mock fetch_price_map with None price
+    mock_price_map = {asset: None}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        overall_position, per_broker_positions = get_asset_positions_by_broker(
+            mock_composite_portfolio, "AAPL", mock_price_service
+        )
+
+    # Verify market_value is None when price unavailable
+    assert overall_position.quantity == 100.0
+    assert overall_position.cost_basis == 15000.0
+    assert overall_position.market_value is None
+
+    assert len(per_broker_positions) == 1
+    assert per_broker_positions[0].market_value is None
+
+
+def test_get_asset_brokers(mock_composite_portfolio):
+    """Test get_asset_brokers() service function."""
+    from wpm_backend.services.portfolio_service import get_asset_brokers
+    from wpm.models import Asset, Position as WPMPosition
+
+    # Create mock asset
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    # Create mock positions for different brokers
+    position_ibkr = Mock(spec=WPMPosition)
+    position_ibkr.asset = asset
+    position_ibkr.quantity = Decimal("100.0")
+    position_ibkr.cost_basis = 15000.0
+
+    position_futu = Mock(spec=WPMPosition)
+    position_futu.asset = asset
+    position_futu.quantity = Decimal("50.0")
+    position_futu.cost_basis = 7500.0
+
+    # Mock get_asset_positions_by_broker
+    mock_composite_portfolio.get_asset_positions_by_broker.return_value = {
+        "IBKR": position_ibkr,
+        "Futu": position_futu,
+    }
+
+    # Test service function
+    brokers = get_asset_brokers(mock_composite_portfolio, "AAPL")
+
+    # Verify broker list
+    assert len(brokers) == 2
+    assert "IBKR" in brokers
+    assert "Futu" in brokers
+    # Verify order matches dictionary keys order
+    assert brokers == ["IBKR", "Futu"] or brokers == ["Futu", "IBKR"]
+
+
+def test_get_asset_brokers_empty(mock_composite_portfolio):
+    """Test get_asset_brokers() when ticker has no positions."""
+    from wpm_backend.services.portfolio_service import get_asset_brokers
+
+    # Mock get_asset_positions_by_broker to return empty dict
+    mock_composite_portfolio.get_asset_positions_by_broker.return_value = {}
+
+    # Test service function
+    brokers = get_asset_brokers(mock_composite_portfolio, "AAPL")
+
+    # Verify empty list
+    assert brokers == []
+
+
+def test_get_asset_brokers_ticker_not_found(mock_composite_portfolio):
+    """Test get_asset_brokers() when ticker doesn't exist."""
+    from wpm_backend.services.portfolio_service import get_asset_brokers
+
+    # Mock get_asset_positions_by_broker to raise ValueError
+    mock_composite_portfolio.get_asset_positions_by_broker.side_effect = ValueError("Ticker INVALID not found")
+
+    # Test that ValueError is raised
+    with pytest.raises(ValueError, match="Ticker INVALID not found"):
+        get_asset_brokers(mock_composite_portfolio, "INVALID")
+
+
+def test_portfolio_asset_lots_endpoint_with_brokers(client_with_portfolio, test_settings):
+    """Test /portfolio/lots/<ticker> endpoint with brokers parameter."""
+    from datetime import date
+    from wpm.models import Asset, Position as WPMPosition
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    # Create lots for different brokers
+    lot1 = Mock()
+    lot1.purchase_date = date(2024, 1, 15)
+    lot1.asset = asset
+    lot1.original_quantity = Decimal("100.0")
+    lot1.remaining_quantity = Decimal("100.0")
+    lot1.cost_basis = 15000.0
+    lot1.matched_sells = []
+    lot1.broker = "IBKR"
+    lot1.get_realized_pnl = Mock(return_value=0.0)
+    lot1.get_unrealized_pnl = Mock(return_value=100.0)
+    lot1.get_total_pnl = Mock(return_value=100.0)
+
+    lot2 = Mock()
+    lot2.purchase_date = date(2024, 2, 20)
+    lot2.asset = asset
+    lot2.original_quantity = Decimal("50.0")
+    lot2.remaining_quantity = Decimal("50.0")
+    lot2.cost_basis = 7500.0
+    lot2.matched_sells = []
+    lot2.broker = "Futu"
+    lot2.get_realized_pnl = Mock(return_value=0.0)
+    lot2.get_unrealized_pnl = Mock(return_value=200.0)
+    lot2.get_total_pnl = Mock(return_value=200.0)
+
+    # Create positions for different brokers
+    position_ibkr = Mock(spec=WPMPosition)
+    position_ibkr.asset = asset
+    position_ibkr.quantity = Decimal("100.0")
+    position_ibkr.cost_basis = 15000.0
+
+    position_futu = Mock(spec=WPMPosition)
+    position_futu.asset = asset
+    position_futu.quantity = Decimal("50.0")
+    position_futu.cost_basis = 7500.0
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+
+    # Mock get_asset_lots to filter by brokers
+    def mock_get_asset_lots(ticker, start_date=None, end_date=None, brokers=None, prices=None):
+        all_lots = [lot1, lot2]
+        if brokers:
+            return [lot for lot in all_lots if lot.broker in brokers]
+        return all_lots
+
+    portfolio.get_asset_lots.side_effect = mock_get_asset_lots
+    portfolio.get_asset_positions_by_broker.return_value = {
+        "IBKR": position_ibkr,
+        "Futu": position_futu,
+    }
+
+    # Mock fetch_price_map
+    mock_price_map = {asset: 175.50}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Test with brokers parameter
+        response = client_with_portfolio.get(
+            "/portfolio/lots/AAPL?brokers=IBKR",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Verify lots are filtered
+    assert "lots" in data
+    assert len(data["lots"]["items"]) == 1
+    assert data["lots"]["items"][0]["broker"] == "IBKR"
+
+    # Verify overall_position is present
+    assert "overall_position" in data
+    assert data["overall_position"]["quantity"] == 100.0
+    assert data["overall_position"]["cost_basis"] == 15000.0
+    assert data["overall_position"]["market_value"] == 17550.0  # 100 * 175.50
+
+    # Verify per_broker_positions is present and filtered
+    assert "per_broker_positions" in data
+    assert len(data["per_broker_positions"]) == 1
+    assert data["per_broker_positions"][0]["broker"] == "IBKR"
+    assert data["per_broker_positions"][0]["quantity"] == 100.0
+
+
+def test_portfolio_asset_lots_endpoint_without_brokers(client_with_portfolio, test_settings):
+    """Test /portfolio/lots/<ticker> endpoint without brokers parameter returns all positions."""
+    from datetime import date
+    from wpm.models import Asset, Position as WPMPosition
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot1 = Mock()
+    lot1.purchase_date = date(2024, 1, 15)
+    lot1.asset = asset
+    lot1.original_quantity = Decimal("100.0")
+    lot1.remaining_quantity = Decimal("100.0")
+    lot1.cost_basis = 15000.0
+    lot1.matched_sells = []
+    lot1.broker = "IBKR"
+    lot1.get_realized_pnl = Mock(return_value=0.0)
+    lot1.get_unrealized_pnl = Mock(return_value=100.0)
+    lot1.get_total_pnl = Mock(return_value=100.0)
+
+    lot2 = Mock()
+    lot2.purchase_date = date(2024, 2, 20)
+    lot2.asset = asset
+    lot2.original_quantity = Decimal("50.0")
+    lot2.remaining_quantity = Decimal("50.0")
+    lot2.cost_basis = 7500.0
+    lot2.matched_sells = []
+    lot2.broker = "Futu"
+    lot2.get_realized_pnl = Mock(return_value=0.0)
+    lot2.get_unrealized_pnl = Mock(return_value=200.0)
+    lot2.get_total_pnl = Mock(return_value=200.0)
+
+    position_ibkr = Mock(spec=WPMPosition)
+    position_ibkr.asset = asset
+    position_ibkr.quantity = Decimal("100.0")
+    position_ibkr.cost_basis = 15000.0
+
+    position_futu = Mock(spec=WPMPosition)
+    position_futu.asset = asset
+    position_futu.quantity = Decimal("50.0")
+    position_futu.cost_basis = 7500.0
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_lots.return_value = [lot1, lot2]
+    portfolio.get_asset_positions_by_broker.return_value = {
+        "IBKR": position_ibkr,
+        "Futu": position_futu,
+    }
+
+    mock_price_map = {asset: 175.50}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        response = client_with_portfolio.get(
+            "/portfolio/lots/AAPL",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Verify all lots are returned
+    assert len(data["lots"]["items"]) == 2
+
+    # Verify overall_position aggregates all brokers
+    assert data["overall_position"]["quantity"] == 150.0  # 100 + 50
+    assert data["overall_position"]["cost_basis"] == 22500.0  # 15000 + 7500
+    assert data["overall_position"]["market_value"] == 26325.0  # (100 * 175.50) + (50 * 175.50) = 17550.0 + 8775.0
+
+    # Verify all per_broker_positions are returned
+    assert len(data["per_broker_positions"]) == 2
+    brokers = [bp["broker"] for bp in data["per_broker_positions"]]
+    assert "IBKR" in brokers
+    assert "Futu" in brokers
+
+
+def test_portfolio_asset_lots_endpoint_brokers_comma_separated(client_with_portfolio, test_settings):
+    """Test /portfolio/lots/<ticker> endpoint with comma-separated brokers."""
+    from datetime import date
+    from wpm.models import Asset, Position as WPMPosition
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    lot1 = Mock()
+    lot1.purchase_date = date(2024, 1, 15)
+    lot1.asset = asset
+    lot1.original_quantity = Decimal("100.0")
+    lot1.remaining_quantity = Decimal("100.0")
+    lot1.cost_basis = 15000.0
+    lot1.matched_sells = []
+    lot1.broker = "IBKR"
+    lot1.get_realized_pnl = Mock(return_value=0.0)
+    lot1.get_unrealized_pnl = Mock(return_value=100.0)
+    lot1.get_total_pnl = Mock(return_value=100.0)
+
+    lot2 = Mock()
+    lot2.purchase_date = date(2024, 2, 20)
+    lot2.asset = asset
+    lot2.original_quantity = Decimal("50.0")
+    lot2.remaining_quantity = Decimal("50.0")
+    lot2.cost_basis = 7500.0
+    lot2.matched_sells = []
+    lot2.broker = "Futu"
+    lot2.get_realized_pnl = Mock(return_value=0.0)
+    lot2.get_unrealized_pnl = Mock(return_value=200.0)
+    lot2.get_total_pnl = Mock(return_value=200.0)
+
+    position_ibkr = Mock(spec=WPMPosition)
+    position_ibkr.asset = asset
+    position_ibkr.quantity = Decimal("100.0")
+    position_ibkr.cost_basis = 15000.0
+
+    position_futu = Mock(spec=WPMPosition)
+    position_futu.asset = asset
+    position_futu.quantity = Decimal("50.0")
+    position_futu.cost_basis = 7500.0
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+
+    def mock_get_asset_lots(ticker, start_date=None, end_date=None, brokers=None, prices=None):
+        all_lots = [lot1, lot2]
+        if brokers:
+            return [lot for lot in all_lots if lot.broker in brokers]
+        return all_lots
+
+    portfolio.get_asset_lots.side_effect = mock_get_asset_lots
+    portfolio.get_asset_positions_by_broker.return_value = {
+        "IBKR": position_ibkr,
+        "Futu": position_futu,
+    }
+
+    mock_price_map = {asset: 175.50}
+    with patch("wpm_backend.services.portfolio_service.fetch_price_map", return_value=mock_price_map):
+        # Test with comma-separated brokers
+        response = client_with_portfolio.get(
+            "/portfolio/lots/AAPL?brokers=IBKR,Futu",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Verify both brokers are included
+    assert len(data["lots"]["items"]) == 2
+    assert len(data["per_broker_positions"]) == 2
+    brokers = [bp["broker"] for bp in data["per_broker_positions"]]
+    assert "IBKR" in brokers
+    assert "Futu" in brokers
+
+
 def test_get_asset_lots_realized_pnl(mock_composite_portfolio, mock_price_service):
     """Test that get_realized_pnl() is called and value is included."""
     from datetime import date
@@ -3310,12 +3871,14 @@ def test_get_portfolio_performance_service(mock_composite_portfolio, mock_price_
             total_market_value=25000.0,
             asset_positions={"AAPL": 17550.0, "GOOGL": 7500.0},
             prices={"AAPL": 175.50, "GOOGL": 150.00},
+            quantities={"AAPL": 100.0, "GOOGL": 50.0},
         ),
         PortfolioHistoryPoint(
             date=date(2024, 1, 16),
             total_market_value=25500.0,
             asset_positions={"AAPL": 18000.0, "GOOGL": 7500.0},
             prices={"AAPL": 180.00, "GOOGL": 150.00},
+            quantities={"AAPL": 100.0, "GOOGL": 50.0},
         ),
     ]
     
@@ -4580,4 +5143,115 @@ def test_get_all_asset_metadata_endpoint_missing_asset_service(client_with_portf
     # Verify response
     assert response.status_code == 500
     assert "asset service" in response.json()["detail"].lower()
+
+
+def test_get_asset_brokers_endpoint_success(client_with_portfolio):
+    """Test GET /asset/brokers/{ticker} endpoint with successful retrieval."""
+    from wpm.models import Asset, Position as WPMPosition
+
+    # Setup authentication
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    token = login_response.json()["access_token"]
+
+    # Setup mock portfolio
+    asset = Mock(spec=Asset)
+    asset.ticker = "AAPL"
+    asset.asset_type = "Stock"
+
+    position_ibkr = Mock(spec=WPMPosition)
+    position_ibkr.asset = asset
+    position_ibkr.quantity = Decimal("100.0")
+    position_ibkr.cost_basis = 15000.0
+
+    position_futu = Mock(spec=WPMPosition)
+    position_futu.asset = asset
+    position_futu.quantity = Decimal("50.0")
+    position_futu.cost_basis = 7500.0
+
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_positions_by_broker.return_value = {
+        "IBKR": position_ibkr,
+        "Futu": position_futu,
+    }
+
+    # Call endpoint
+    response = client_with_portfolio.get(
+        "/asset/brokers/AAPL",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    # Verify response
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ticker"] == "AAPL"
+    assert len(data["brokers"]) == 2
+    assert "IBKR" in data["brokers"]
+    assert "Futu" in data["brokers"]
+
+
+def test_get_asset_brokers_endpoint_empty(client_with_portfolio):
+    """Test GET /asset/brokers/{ticker} endpoint when ticker has no positions."""
+    from wpm.models import Asset
+
+    # Setup authentication
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    token = login_response.json()["access_token"]
+
+    # Setup mock portfolio with empty positions
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_positions_by_broker.return_value = {}
+
+    # Call endpoint
+    response = client_with_portfolio.get(
+        "/asset/brokers/AAPL",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    # Verify response (empty list is valid)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ticker"] == "AAPL"
+    assert data["brokers"] == []
+
+
+def test_get_asset_brokers_endpoint_not_found(client_with_portfolio):
+    """Test GET /asset/brokers/{ticker} endpoint when ticker is not found."""
+    # Setup authentication
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    token = login_response.json()["access_token"]
+
+    # Setup mock portfolio to raise ValueError
+    portfolio = client_with_portfolio.app.state.composite_portfolio
+    portfolio.get_asset_positions_by_broker.side_effect = ValueError("Failed to retrieve brokers for ticker INVALID: Ticker not found")
+
+    # Call endpoint
+    response = client_with_portfolio.get(
+        "/asset/brokers/INVALID",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    # Verify response
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower() or "INVALID" in response.json()["detail"]
+
+
+def test_get_asset_brokers_endpoint_unauthorized(client_with_portfolio):
+    """Test GET /asset/brokers/{ticker} endpoint without authentication."""
+    # Call endpoint without token
+    response = client_with_portfolio.get("/asset/brokers/AAPL")
+
+    # Verify response
+    assert response.status_code == 401
 
