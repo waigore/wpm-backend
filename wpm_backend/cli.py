@@ -147,6 +147,70 @@ class InteractiveCLI:
         except Exception as e:
             print(f"Error: Failed to connect to API: {e}")
 
+    def prices_command(self, ticker: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> None:
+        """Call /asset/prices/{ticker} endpoint and display results with historical price data."""
+        if not self.token:
+            print("Error: Not logged in. Please run 'login' first.")
+            return
+
+        # Build URL with optional query parameters
+        url = f"/asset/prices/{ticker}"
+        query_params = []
+        if start_date:
+            query_params.append(f"start_date={start_date}")
+        if end_date:
+            query_params.append(f"end_date={end_date}")
+        if query_params:
+            url += "?" + "&".join(query_params)
+
+        # Call asset/prices/{ticker} endpoint with authentication
+        try:
+            response = self.client.get(
+                url,
+                headers={"Authorization": f"Bearer {self.token}"},
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Display price history
+                print("\nPRICE HISTORY")
+                print("-" * 60)
+                print(json.dumps(data, indent=2))
+            elif response.status_code == 401:
+                print("Error: Authentication failed. Token may be expired. Please run 'login' again.")
+                self.token = None  # Clear invalid token
+            elif response.status_code == 404:
+                print(f"Error: Ticker '{ticker}' not found.")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+            elif response.status_code == 400:
+                print("Error: Invalid request parameters.")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+            elif response.status_code == 500:
+                print("Error: Server error. Price data may not be available.")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+            else:
+                print(f"Error: Request failed with status code {response.status_code}")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+        except Exception as e:
+            print(f"Error: Failed to connect to API: {e}")
+
     def trades_command(self, ticker: str) -> None:
         """Call /portfolio/trades/{ticker} endpoint and display results with paginated trades."""
         if not self.token:
@@ -431,6 +495,7 @@ class InteractiveCLI:
         print("  portfolio all   - Get all portfolio positions (requires login)")
         print("  trades <ticker> - Get all trades for an asset ticker (requires login)")
         print("  lots <ticker> [brokers] - Get all lots for an asset ticker, optionally filtered by brokers (comma-separated, use quotes for names with spaces) (requires login)")
+        print("  prices <ticker> [start_date] [end_date] - Get historical price data for an asset ticker (requires login, dates in ISO format YYYY-MM-DD)")
         print("  metadata <ticker1> [ticker2] ... - Get metadata for one or more asset tickers (requires login)")
         print("  performance [YYYY-MM-DD] [granularity] - Get portfolio performance up to date (requires login, defaults to today, optional granularity: daily/weekly/monthly)")
         print("  status          - Check application status (portfolio data, services)")
@@ -480,6 +545,14 @@ class InteractiveCLI:
                         self.lots_command(ticker, brokers)
                     else:
                         print("Error: Ticker is required. Usage: lots <ticker> [brokers]")
+                elif cmd == "prices":
+                    if len(parts) > 1:
+                        ticker = parts[1]
+                        start_date = parts[2] if len(parts) > 2 else None
+                        end_date = parts[3] if len(parts) > 3 else None
+                        self.prices_command(ticker, start_date, end_date)
+                    else:
+                        print("Error: Ticker is required. Usage: prices <ticker> [start_date] [end_date]")
                 elif cmd == "metadata":
                     if len(parts) > 1:
                         tickers = parts[1:]

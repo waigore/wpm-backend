@@ -1,7 +1,7 @@
 """API route definitions (login, portfolio endpoints)."""
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -15,8 +15,8 @@ from wpm.pricing import PriceService
 from wpm_backend.auth.auth import authenticate_user, create_access_token, verify_token
 from wpm_backend.config import Settings, get_settings
 from wpm_backend.models.auth import LoginRequest, LoginResponse
-from wpm_backend.models.portfolio import AssetBrokersResponse, AssetMetadataAllResponse, AssetMetadataResponse, PortfolioHistoryPoint, PortfolioPerformanceResponse, Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesResponse
-from wpm_backend.services.portfolio_service import apply_granularity_filter, get_all_asset_metadata, get_all_positions, get_asset_brokers, get_asset_lots, get_asset_metadata, get_asset_positions_by_broker, get_asset_trades, get_cached_portfolio_performance, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
+from wpm_backend.models.portfolio import AssetBrokersResponse, AssetMetadataAllResponse, AssetMetadataResponse, AssetPriceHistoryResponse, PortfolioHistoryPoint, PortfolioPerformanceResponse, Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesResponse
+from wpm_backend.services.portfolio_service import apply_granularity_filter, get_all_asset_metadata, get_all_positions, get_asset_brokers, get_asset_lots, get_asset_metadata, get_asset_positions_by_broker, get_asset_price_history, get_asset_trades, get_cached_portfolio_performance, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -575,6 +575,7 @@ def get_portfolio_performance_endpoint(
     username: str = Depends(get_current_user),
     historical_portfolio: CompositePortfolio = Depends(get_historical_portfolio),
     cache_data: tuple[dict[str, PortfolioHistoryPoint], Optional[date]] = Depends(get_performance_cache),
+    price_service: PriceService = Depends(get_price_service),
     start_date: Optional[str] = Query(None, description="Start date for performance tracking (ISO format YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date for performance tracking (ISO format YYYY-MM-DD)"),
     granularity: str = Query("daily", pattern="^(daily|weekly|monthly)$", description="Granularity of history points: 'daily' (default), 'weekly' (Monday-based), or 'monthly' (start of month)"),
@@ -650,14 +651,24 @@ def get_portfolio_performance_endpoint(
             detail=f"end_date ({end_date_obj}) must be greater than or equal to start_date ({start_date_obj})",
         )
     
+    
     try:
-        # Get portfolio performance from cache (all daily points)
-        history_points = get_cached_portfolio_performance(
-            cache,
-            cache_end_date,
-            start_date_obj,
-            end_date_obj,
-        )
+        # Get portfolio performance either from cache (if available) or via on-demand calculation
+        if cache and cache_end_date is not None:
+            history_points = get_cached_portfolio_performance(
+                cache,
+                cache_end_date,
+                start_date_obj,
+                end_date_obj,
+            )
+        else:
+            # On-demand calculation using historical portfolio and price service
+            history_points = get_portfolio_performance(
+                historical_portfolio,
+                price_service,
+                start_date_obj,
+                end_date_obj,
+            )
         
         # Apply granularity filter
         filtered_points = apply_granularity_filter(
@@ -683,6 +694,87 @@ def get_portfolio_performance_endpoint(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(e),
+            )
+        # Check if error is due to missing historical prices
+        if "Historical prices unavailable" in error_str:
+            logger.error(f"Historical prices unavailable for requested date range: {error_str}")
+            
+            # Try to extract problematic date from error message and calculate partial data
+            # Error format: "Historical prices unavailable for tickers on YYYY-MM-DD: TICKER1, TICKER2"
+            import re
+            date_match = re.search(r'on (\d{4}-\d{2}-\d{2})', error_str)
+            if date_match and not (cache and cache_end_date is not None):
+                problematic_date_str = date_match.group(1)
+                try:
+                    problematic_date = date.fromisoformat(problematic_date_str)
+                    logger.info(
+                        f"Attempting to calculate performance by excluding problematic date {problematic_date_str}. "
+                        f"Will try date ranges: [{start_date_obj}, {problematic_date - timedelta(days=1)}] "
+                        f"and [{problematic_date + timedelta(days=1)}, {end_date_obj}]"
+                    )
+                    
+                    # Try to get performance data for dates before and after the problematic date
+                    history_points = []
+                    
+                    # Calculate performance before problematic date
+                    if start_date_obj < problematic_date:
+                        try:
+                            before_points = get_portfolio_performance(
+                                historical_portfolio,
+                                price_service,
+                                start_date_obj,
+                                problematic_date - timedelta(days=1),
+                            )
+                            history_points.extend(before_points)
+                            logger.info(f"Retrieved {len(before_points)} history points before problematic date {problematic_date_str}")
+                        except Exception as before_e:
+                            logger.warning(f"Could not calculate performance before {problematic_date_str}: {before_e}")
+                    
+                    # Calculate performance after problematic date
+                    if problematic_date < end_date_obj:
+                        try:
+                            after_points = get_portfolio_performance(
+                                historical_portfolio,
+                                price_service,
+                                problematic_date + timedelta(days=1),
+                                end_date_obj,
+                            )
+                            history_points.extend(after_points)
+                            logger.info(f"Retrieved {len(after_points)} history points after problematic date {problematic_date_str}")
+                        except Exception as after_e:
+                            logger.warning(f"Could not calculate performance after {problematic_date_str}: {after_e}")
+                    
+                    # If we got any data, return it (even if partial)
+                    if history_points:
+                        # Sort by date to ensure chronological order
+                        history_points.sort(key=lambda p: p.date)
+                        
+                        # Apply granularity filter
+                        filtered_points = apply_granularity_filter(
+                            history_points,
+                            start_date_obj,
+                            end_date_obj,
+                            granularity,
+                        )
+                        
+                        logger.warning(
+                            f"Returning partial portfolio performance data: {len(filtered_points)} points. "
+                            f"Data for date {problematic_date_str} was excluded due to missing prices. "
+                            f"Original error: {error_str}"
+                        )
+                        
+                        return PortfolioPerformanceResponse(history_points=filtered_points)
+                    else:
+                        logger.error(f"Could not calculate any performance data after excluding {problematic_date_str}")
+                except (ValueError, AttributeError) as parse_e:
+                    logger.warning(f"Could not parse problematic date from error message: {parse_e}")
+            
+            # If workaround failed or cache is available, return error
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot calculate portfolio performance: {error_str}. "
+                       f"Some tickers may not have historical price data available for the requested date range. "
+                       f"Please try a different date range or check that all tickers have price data available.",
             )
         # Check if error indicates end_date > cache_end_date
         if "exceeds maximum available date" in error_str or "cache_end_date is None" in error_str:
@@ -867,5 +959,90 @@ def get_asset_brokers_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error while retrieving brokers for ticker {ticker}",
+        )
+
+
+@router.get("/asset/prices/{ticker}", response_model=AssetPriceHistoryResponse)
+def get_asset_price_history_endpoint(
+    ticker: str,
+    username: str = Depends(get_current_user),
+    composite_portfolio: CompositePortfolio = Depends(get_composite_portfolio),
+    price_service: PriceService = Depends(get_price_service),
+    start_date: Optional[str] = Query(None, description="Start date for price history (ISO format YYYY-MM-DD, defaults to max of 2 years ago or portfolio start)"),
+    end_date: Optional[str] = Query(None, description="End date for price history (ISO format YYYY-MM-DD, defaults to today)"),
+) -> AssetPriceHistoryResponse:
+    """
+    GET endpoint to retrieve historical price data for a specific asset ticker.
+
+    Requires JWT authentication.
+
+    Args:
+        ticker: Asset ticker symbol
+        username: Authenticated username (from token)
+        composite_portfolio: Composite portfolio instance (injected via dependency)
+        price_service: PriceService instance (injected via dependency)
+        start_date: Optional start date for price history (ISO format YYYY-MM-DD, defaults to max of 2 years ago or portfolio start)
+        end_date: Optional end date for price history (ISO format YYYY-MM-DD, defaults to today)
+
+    Returns:
+        AssetPriceHistoryResponse containing historical price points and current price
+
+    Raises:
+        HTTPException: 400 if date format is invalid or date range is invalid
+        HTTPException: 404 if ticker is not found in portfolio
+        HTTPException: 500 if price service is unavailable or internal error occurs
+    """
+    logger.info(
+        f"Asset price history request received from user: {username}, ticker={ticker}, "
+        f"start_date={start_date}, end_date={end_date}"
+    )
+
+    # Parse date parameters if provided
+    start_date_obj = None
+    end_date_obj = None
+
+    if start_date is not None:
+        start_date_obj = _parse_date_string(start_date, "start_date")
+
+    if end_date is not None:
+        end_date_obj = _parse_date_string(end_date, "end_date")
+
+    try:
+        # Get price history from service
+        price_history = get_asset_price_history(
+            composite_portfolio,
+            ticker,
+            price_service,
+            start_date=start_date_obj,
+            end_date=end_date_obj,
+        )
+
+        logger.info(
+            f"Asset price history response sent to user: {username}, ticker={ticker}, "
+            f"price_points_count={len(price_history.prices)}, current_price={price_history.current_price}"
+        )
+
+        return price_history
+    except ValueError as e:
+        # Handle ticker not found or invalid date range
+        error_message = str(e)
+        if "not found" in error_message.lower():
+            logger.warning(f"Ticker {ticker} not found: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error_message,
+            )
+        else:
+            # Invalid date range or other validation errors
+            logger.warning(f"Invalid request for ticker {ticker}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_message,
+            )
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving price history for ticker {ticker}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error while retrieving price history for ticker {ticker}",
         )
 

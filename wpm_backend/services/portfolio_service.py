@@ -10,7 +10,7 @@ from wpm.models import Asset, Position as WPMPosition, Trade as WPMTrade
 from wpm.portfolio import CompositePortfolio, fetch_price_map, get_historical_performance, get_positions_with_allocations
 from wpm.pricing import PriceService
 
-from wpm_backend.models.portfolio import BrokerPosition, Lot, MatchedSell, OverallPosition, PortfolioHistoryPoint, Position, Trade
+from wpm_backend.models.portfolio import AssetPriceHistoryResponse, BrokerPosition, Lot, MatchedSell, OverallPosition, PortfolioHistoryPoint, Position, PricePoint, Trade
 from wpm_backend.services.portfolio_utils import (
     _get_month_start_dates,
     _get_weekly_dates,
@@ -697,21 +697,21 @@ def get_cached_portfolio_performance(
         ValueError: If date range is invalid, cache_end_date is None, or end_date > cache_end_date
     """
     logger.info(f"Retrieving cached portfolio performance from {start_date} to {end_date}")
-    
+
     # Validate cache_end_date
     if cache_end_date is None:
         raise ValueError("Performance cache is not available (cache_end_date is None)")
-    
+
     # Validate date range
     if start_date > end_date:
         raise ValueError(f"start_date ({start_date}) must be less than or equal to end_date ({end_date})")
-    
+
     # Validate end_date is not beyond cache
     if end_date > cache_end_date:
         raise ValueError(
             f"end_date ({end_date}) exceeds maximum available date in cache ({cache_end_date})"
         )
-    
+
     # Iterate through dates from start_date to end_date (inclusive) and retrieve from cache
     history_points = []
     current_date = start_date
@@ -725,7 +725,7 @@ def get_cached_portfolio_performance(
             logger.warning(f"Date {date_str} not found in performance cache")
         # Increment date by one day
         current_date += timedelta(days=1)
-    
+
     logger.info(
         f"Retrieved {len(history_points)} history points from cache "
         f"(from {start_date} to {end_date})"
@@ -1000,3 +1000,106 @@ def get_asset_brokers(
     
     logger.info(f"Found {len(broker_names)} brokers for ticker {ticker}: {broker_names}")
     return broker_names
+
+
+def get_asset_price_history(
+    composite: CompositePortfolio,
+    ticker: str,
+    price_service: PriceService,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+) -> AssetPriceHistoryResponse:
+    """
+    Retrieve historical price data for a specific asset ticker.
+
+    Args:
+        composite: CompositePortfolio instance from wpm library
+        ticker: Asset ticker symbol to retrieve price history for
+        price_service: PriceService instance for retrieving prices
+        start_date: Optional start date for price history (defaults to max of 2 years ago or portfolio start_date)
+        end_date: Optional end date for price history (defaults to today)
+
+    Returns:
+        AssetPriceHistoryResponse with historical prices and current price
+
+    Raises:
+        ValueError: If ticker is not found in portfolio or price data cannot be retrieved
+    """
+    logger.info(f"Retrieving price history for ticker: {ticker}, start_date={start_date}, end_date={end_date}")
+
+    # Validate ticker exists in portfolio and get asset type
+    assets = composite.get_assets()
+    if ticker not in assets:
+        logger.warning(f"Ticker {ticker} not found in portfolio")
+        raise ValueError(f"Ticker {ticker} not found in portfolio")
+
+    asset = assets[ticker]
+    asset_type = asset.asset_type
+    logger.info(f"Found asset {ticker} with asset_type: {asset_type}")
+
+    # Calculate default start_date if not provided
+    # Default: max of 2 years ago or portfolio start_date
+    today = date.today()
+    if start_date is None:
+        portfolio_start_date = composite.start_date
+        two_years_ago = today - timedelta(days=730)
+        
+        if portfolio_start_date is not None:
+            start_date = max(two_years_ago, portfolio_start_date)
+        else:
+            start_date = two_years_ago
+        
+        logger.info(f"Calculated default start_date: {start_date} (max of 2 years ago or portfolio start)")
+
+    # Default end_date to today if not provided
+    if end_date is None:
+        end_date = today
+        logger.info(f"Using default end_date: {end_date}")
+
+    # Validate date range
+    if end_date < start_date:
+        logger.warning(f"Invalid date range: end_date={end_date} < start_date={start_date}")
+        raise ValueError(f"end_date ({end_date}) must be greater than or equal to start_date ({start_date})")
+
+    # Get historical prices
+    try:
+        historical_prices = price_service.get_historical_prices(
+            [ticker], asset_type, start_date, end_date
+        )
+        logger.info(f"Retrieved historical prices for {ticker} from {start_date} to {end_date}")
+    except Exception as e:
+        logger.error(f"Error retrieving historical prices for ticker {ticker}: {e}", exc_info=True)
+        raise ValueError(f"Failed to retrieve historical prices for ticker {ticker}: {e}")
+
+    # Transform historical prices to PricePoint list
+    price_points: List[PricePoint] = []
+    if ticker in historical_prices:
+        ticker_prices = historical_prices[ticker]
+        # Sort by date to ensure chronological order
+        sorted_dates = sorted(ticker_prices.keys())
+        for price_date in sorted_dates:
+            price_points.append(
+                PricePoint(
+                    date=price_date.isoformat(),
+                    price=ticker_prices[price_date]
+                )
+            )
+        logger.info(f"Transformed {len(price_points)} price points for {ticker}")
+    else:
+        logger.warning(f"No historical price data found for ticker {ticker} in date range")
+
+    # Get current price
+    current_price: Optional[float] = None
+    try:
+        current_price = price_service.get_price(ticker, asset_type)
+        logger.info(f"Retrieved current price for {ticker}: {current_price}")
+    except Exception as e:
+        logger.warning(f"Could not retrieve current price for ticker {ticker}: {e}", exc_info=True)
+        # Current price is optional, so we continue without it
+
+    return AssetPriceHistoryResponse(
+        ticker=ticker,
+        asset_type=asset_type,
+        prices=price_points,
+        current_price=current_price
+    )

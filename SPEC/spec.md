@@ -122,6 +122,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `get_asset_metadata_endpoint(ticker: str, ...) -> AssetMetadataResponse`: GET endpoint at `/asset/metadata/{ticker}` that requires JWT authentication. Verifies token via auth module, retrieves CompositePortfolio and AssetService from application state, calls portfolio_service.get_asset_metadata() with ticker and asset_service to fetch metadata for the specified ticker, then returns AssetMetadataResponse containing ticker and metadata dictionary (may be None if retrieval fails). Returns 404 Not Found if ticker doesn't exist in portfolio. Returns 500 Internal Server Error if AssetService is not available. Logs request/response at INFO level.
 - `get_all_asset_metadata_endpoint(...) -> AssetMetadataAllResponse`: GET endpoint at `/asset/metadata/all` that requires JWT authentication. Verifies token via auth module, retrieves CompositePortfolio and AssetService from application state, calls portfolio_service.get_all_asset_metadata() with composite and asset_service to fetch metadata for all tickers in the portfolio, then returns AssetMetadataAllResponse containing dictionary mapping ticker to metadata (None if retrieval fails for that ticker). Returns 500 Internal Server Error if AssetService is not available. Logs request/response at INFO level.
 - `get_asset_brokers_endpoint(ticker: str, ...) -> AssetBrokersResponse`: GET endpoint at `/asset/brokers/{ticker}` that requires JWT authentication. Verifies token via auth module, retrieves CompositePortfolio from application state, calls portfolio_service.get_asset_brokers() with ticker to fetch list of broker names that have positions for the specified ticker, then returns AssetBrokersResponse containing ticker and list of broker names. Returns 404 Not Found if ticker is not found in portfolio. Returns 500 Internal Server Error if portfolio data is not available. Logs request/response at INFO level.
+- `get_asset_price_history_endpoint(ticker: str, ...) -> AssetPriceHistoryResponse`: GET endpoint at `/asset/prices/{ticker}` that requires JWT authentication. Supports optional date filtering via query parameters: `start_date` (optional, ISO format YYYY-MM-DD, defaults to max of 2 years ago or portfolio start_date) and `end_date` (optional, ISO format YYYY-MM-DD, defaults to today). Verifies token via auth module, retrieves CompositePortfolio and PriceService from application state, parses start_date and end_date if provided, calls portfolio_service.get_asset_price_history() with ticker, price_service, and date parameters to fetch historical price data and current price, then returns AssetPriceHistoryResponse containing ticker, asset_type, list of PricePoint objects (historical prices), and current_price (may be None if unavailable). **The `prices` collection always represents historical prices at each date in the requested range; the `current_price` field is a separate, point-in-time value and MUST NOT be treated as part of the historical series by clients.** Validates date formats and date range (start_date <= end_date), returns 400 Bad Request for invalid dates or date range, 404 Not Found if ticker doesn't exist in portfolio, 500 Internal Server Error if price service is unavailable or internal error occurs. Logs request/response at INFO level.
 - `get_asset_service(request: Request) -> AssetService`: Dependency function that retrieves AssetService from application state. Returns AssetService instance. Raises HTTPException with 500 status if AssetService is not available. Used to provide AssetService to metadata endpoints.
 - `get_current_user(token: str = Depends(oauth2_scheme), settings: Settings = Depends(get_settings)) -> str`: Dependency function that extracts JWT token from Authorization header using OAuth2PasswordBearer, verifies it via auth module, and returns username. Raises HTTPException with 401 status if token is invalid or expired. Used to protect endpoints requiring authentication.
 
@@ -172,6 +173,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `get_asset_metadata(composite: CompositePortfolio, ticker: str, asset_service: AssetService) -> Optional[Dict[str, Any]]`: Retrieves metadata for a single asset ticker from the wpm library using AssetService. Gets asset_type from portfolio using `composite.get_assets()` which returns `Dict[str, Asset]` mapping ticker to Asset object, extracts asset_type from the Asset object. Calls `asset_service.get_metadata(ticker, asset_type)` which returns Optional[Dict[str, Any]]. Returns None if metadata retrieval fails. Raises ValueError if ticker is not found in portfolio. Logs function entry/exit and wpm library calls at INFO level. Returns metadata dictionary or None.
 - `get_all_asset_metadata(composite: CompositePortfolio, asset_service: AssetService) -> Dict[str, Optional[Dict[str, Any]]]`: Retrieves metadata for all tickers in the portfolio from the wpm library using AssetService. Gets all tickers from portfolio using `composite.get_assets()` which returns `Dict[str, Asset]` mapping ticker to Asset object. Groups tickers by asset_type (since `get_metadata_batch()` requires all tickers to have the same asset_type). For each asset_type group, calls `asset_service.get_metadata_batch(tickers, asset_type)` which returns `Dict[str, Optional[Dict[str, Any]]]` mapping ticker to metadata dict (None if retrieval fails). Merges results from all asset_type groups into a single dictionary. Logs function entry/exit, number of tickers processed, and wpm library calls at INFO level. Returns dictionary mapping ticker to metadata (None if retrieval fails for that ticker).
 - `get_asset_brokers(composite: CompositePortfolio, ticker: str) -> List[str]`: Retrieves list of broker names that have positions for a specific asset ticker from the wpm composite portfolio using `composite.get_asset_positions_by_broker(ticker)` which returns a dictionary mapping broker names to Position objects. Extracts broker names from the dictionary keys and returns them as a list. Returns empty list if ticker exists but has no broker positions. Logs function entry/exit and wpm library calls at INFO level. Raises ValueError if ticker is not found.
+- `get_asset_price_history(composite: CompositePortfolio, ticker: str, price_service: PriceService, start_date: Optional[date] = None, end_date: Optional[date] = None) -> AssetPriceHistoryResponse`: Retrieves historical price data for a specific asset ticker. Validates ticker exists in portfolio using `composite.get_assets()` which returns `Dict[str, Asset]` mapping ticker to Asset object, extracts asset_type from the Asset object. Calculates default start_date if not provided: max of 2 years ago (730 days) or portfolio start_date (from `composite.start_date` property). Defaults end_date to today if not provided. Validates date range (start_date <= end_date). Calls `price_service.get_historical_prices([ticker], asset_type, start_date, end_date)` which returns `Dict[str, Dict[date, float]]` mapping ticker to dictionary of dates to prices. Transforms historical prices to list of PricePoint objects sorted by date ascending. Calls `price_service.get_price(ticker, asset_type)` to get current price (may be None if unavailable). Returns AssetPriceHistoryResponse containing ticker, asset_type, prices list, and current_price. Logs function entry/exit, date calculations, and price retrieval at INFO level. Raises ValueError if ticker is not found, date range is invalid, or price data cannot be retrieved.
 
 **Artifacts**: None
 
@@ -329,6 +331,7 @@ This project provides a Python FastAPI backend that exposes Wealth Portfolio Man
 - `trades <ticker>`: Retrieves all trades for the specified asset ticker via `/portfolio/trades/{ticker}` endpoint, displays formatted JSON
 - `lots <ticker> [brokers]`: Retrieves all lots for the specified asset ticker via `/portfolio/lots/{ticker}` endpoint, optionally filtered by brokers (comma-separated). If `brokers` is provided, appends `?brokers={brokers}` to the URL (URL-encoded). Displays formatted JSON including paginated lots, overall_position, and per_broker_positions. Broker names with spaces should be quoted (e.g., `lots AAPL "Some Broker"`). Example: `lots AAPL IBKR,Futu` or `lots AAPL "Some Broker"`.
 - `performance [YYYY-MM-DD]`: Retrieves historical performance data via `/portfolio/all/performance?end_date=YYYY-MM-DD` endpoint, displays last 10 history points in formatted JSON. Date parameter is optional and defaults to today if not provided.
+- `prices <ticker> [start_date] [end_date]`: Retrieves historical price data for a specific asset ticker via `/asset/prices/{ticker}` endpoint, displays formatted JSON. Optional start_date and end_date parameters in ISO format (YYYY-MM-DD). If not provided, defaults to max of 2 years ago or portfolio start_date for start_date, and today for end_date. Example: `prices AAPL` or `prices AAPL 2024-01-01 2024-12-31`.
 - `metadata <ticker1> [ticker2] ...`: Retrieves metadata for one or more asset tickers via `/asset/metadata/{ticker}` endpoint (called once per ticker), displays formatted JSON for each ticker. Example: `metadata GOOG AAPL MSFT BTC-USD`. Each ticker's result is displayed independently.
 - `help`: Lists available commands and their descriptions
 - `exit`/`quit`: Terminates the interactive session
@@ -837,6 +840,56 @@ Response model for the `/asset/brokers/{ticker}` endpoint. Contains list of brok
   - Source: Keys from `composite.get_asset_positions_by_broker(ticker)` result dictionary
   - Validation: List of non-empty strings (may be empty list if ticker exists but has no positions)
   - Example: ["IBKR", "Futu"] or []
+
+### PricePoint
+**Location**: `wpm_backend/models/portfolio.py`
+
+Model representing a single historical price point.
+
+**Fields**:
+- `date` (str, required)
+  - Description: Date in ISO format YYYY-MM-DD
+  - Source: Date key from `price_service.get_historical_prices()` result, converted to ISO string
+  - Validation: ISO date string format (YYYY-MM-DD)
+  - Example: "2024-01-15"
+  
+- `price` (float, required)
+  - Description: Price in USD
+  - Source: Price value from `price_service.get_historical_prices()` result for the date
+  - Validation: Non-negative float, ge=0
+  - Example: 150.25
+
+### AssetPriceHistoryResponse
+**Location**: `wpm_backend/models/portfolio.py`
+
+Response model for the `/asset/prices/{ticker}` endpoint. Contains historical price data and current price for a specific asset.
+
+**Fields**:
+- `ticker` (str, required)
+  - Description: Asset ticker symbol
+  - Source: Path parameter from request
+  - Validation: Non-empty string
+  - Example: "AAPL"
+  
+- `asset_type` (str, required)
+  - Description: Asset type (Stock, ETF, or Crypto)
+  - Source: `asset.asset_type` from portfolio's asset dictionary
+  - Validation: Non-empty string, one of "Stock", "ETF", or "Crypto"
+  - Example: "Stock"
+  
+- `prices` (List[PricePoint], required)
+  - Description: Historical price points, sorted by date ascending
+  - Source: Transformed from `price_service.get_historical_prices([ticker], asset_type, start_date, end_date)` result
+  - Validation: List of valid PricePoint objects, sorted chronologically
+  - Example: [PricePoint(date="2024-01-15", price=150.25), PricePoint(date="2024-01-16", price=151.50), ...]
+  
+- `current_price` (Optional[float], optional)
+  - Description: Current market price in USD
+  - Source: `price_service.get_price(ticker, asset_type)` result
+  - Validation: Non-negative float, ge=0 (if provided), None if price unavailable
+  - Example: 175.50 or None
+
+**Note**: The prices list may be empty if no historical price data is available for the specified date range. The current_price may be None if the current price cannot be retrieved (e.g., market closed, API error). Prices are sorted by date in ascending order (oldest first).
 
 ### Page[Lot]
 **Location**: `fastapi_pagination.Page`

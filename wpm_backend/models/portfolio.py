@@ -168,3 +168,19 @@ class AssetBrokersResponse(BaseModel):
     ticker: str = Field(..., description="Asset ticker symbol")
     brokers: list[str] = Field(..., description="List of broker names that have positions for this ticker")
 
+
+class PricePoint(BaseModel):
+    """Model representing a single historical price point."""
+
+    date: str = Field(..., description="Date in ISO format YYYY-MM-DD")
+    price: float = Field(..., ge=0, description="Price in USD")
+
+
+class AssetPriceHistoryResponse(BaseModel):
+    """Response model for /asset/prices/{ticker} endpoint with historical price data."""
+
+    ticker: str = Field(..., description="Asset ticker symbol")
+    asset_type: str = Field(..., description="Asset type (Stock, ETF, or Crypto)")
+    prices: list[PricePoint] = Field(..., description="Historical price points")
+    current_price: Optional[float] = Field(None, ge=0, description="Current market price in USD")
+

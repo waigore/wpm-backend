@@ -657,6 +657,87 @@
           }
         }
       }
+    },
+    "/asset/prices/{ticker}": {
+      "get": {
+        "summary": "Get Asset Price History Endpoint",
+        "description": "GET endpoint to retrieve historical price data for a specific asset ticker.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: PriceService instance (injected via dependency)\n    start_date: Optional start date for price history (ISO format YYYY-MM-DD, defaults to max of 2 years ago or portfolio start)\n    end_date: Optional end date for price history (ISO format YYYY-MM-DD, defaults to today)\n\nReturns:\n    AssetPriceHistoryResponse containing historical price points and current price\n\nRaises:\n    HTTPException: 400 if date format is invalid or date range is invalid\n    HTTPException: 404 if ticker is not found in portfolio\n    HTTPException: 500 if price service is unavailable or internal error occurs",
+        "operationId": "get_asset_price_history_endpoint_asset_prices__ticker__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticker"
+            }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start date for price history (ISO format YYYY-MM-DD, defaults to max of 2 years ago or portfolio start)",
+              "title": "Start Date"
+            },
+            "description": "Start date for price history (ISO format YYYY-MM-DD, defaults to max of 2 years ago or portfolio start)"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End date for price history (ISO format YYYY-MM-DD, defaults to today)",
+              "title": "End Date"
+            },
+            "description": "End date for price history (ISO format YYYY-MM-DD, defaults to today)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetPriceHistoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -739,6 +820,49 @@
         ],
         "title": "AssetMetadataResponse",
         "description": "Response model for /asset/metadata/{ticker} endpoint with asset metadata."
+      },
+      "AssetPriceHistoryResponse": {
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "title": "Ticker",
+            "description": "Asset ticker symbol"
+          },
+          "asset_type": {
+            "type": "string",
+            "title": "Asset Type",
+            "description": "Asset type (Stock, ETF, or Crypto)"
+          },
+          "prices": {
+            "items": {
+              "$ref": "#/components/schemas/PricePoint"
+            },
+            "type": "array",
+            "title": "Prices",
+            "description": "Historical price points"
+          },
+          "current_price": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Price",
+            "description": "Current market price in USD"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticker",
+          "asset_type",
+          "prices"
+        ],
+        "title": "AssetPriceHistoryResponse",
+        "description": "Response model for /asset/prices/{ticker} endpoint with historical price data."
       },
       "BrokerPosition": {
         "properties": {
@@ -1379,6 +1503,28 @@
         ],
         "title": "Position",
         "description": "Model representing a single portfolio position."
+      },
+      "PricePoint": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "description": "Date in ISO format YYYY-MM-DD"
+          },
+          "price": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Price",
+            "description": "Price in USD"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "price"
+        ],
+        "title": "PricePoint",
+        "description": "Model representing a single historical price point."
       },
       "Trade": {
         "properties": {
