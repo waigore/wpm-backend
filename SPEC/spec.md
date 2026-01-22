@@ -1086,6 +1086,13 @@ Paginated response structure used within PortfolioAllResponse. Uses fastapi-pagi
 - **Verbose**: `pytest -v`
 - **Specific Test**: `pytest tests/test_auth.py::test_login_success`
 
+### Test Data Isolation
+- **Cache Segregation**: All wpm library cache files are automatically redirected to a test-specific directory when running tests
+- **Test Cache Location**: Temporary directory created per test session (automatically cleaned up)
+- **Production Cache**: Production cache files remain in `~/.wpm/` and are never accessed during tests
+- **Enforcement**: Automatic via pytest fixture in `conftest.py` - no manual configuration needed
+- **Principle**: See "Segregate Test and Production Data" in `SPEC/clean_coding_principles.md`
+
 ## Logging and Observability
 
 ### Logging Framework

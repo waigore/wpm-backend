@@ -178,6 +178,27 @@ def get_all_positions_endpoint(
 - Use optional methods with default implementations in base classes rather than checking for attribute existence.
 - Document any legitimate uses of `hasattr` with comments explaining why it's necessary.
 
+### 5. Segregate Test and Production Data
+
+**Principle:** Test data must be completely isolated from production data. This includes cache files, databases, and any persistent storage used by external libraries.
+
+**Rationale:**
+- Tests should never contaminate production data
+- Production data should never affect test results
+- Test isolation ensures reproducible test runs
+- Prevents accidental data loss or corruption in production
+
+**Enforcement:**
+- All wpm library cache files must use test-specific directories when running tests
+- Tests must not access production cache files located in `~/.wpm/`
+- Test cache directory is automatically configured via pytest fixtures (see `tests/conftest.py`)
+- When writing tests that use real wpm library instances, ensure they use the test cache configuration
+
+**Examples:**
+- Test cache directory: `~/.wpm-test/` (or temporary directory)
+- Production cache directory: `~/.wpm/`
+- All wpm library services (PriceService, AssetService, CurrencyService) automatically use test cache when running under pytest
+
 ## FastAPI-Specific Patterns
 
 This section provides guidance on applying these principles within the FastAPI framework used by this project.
@@ -351,6 +372,8 @@ When reviewing code, verify:
 - [ ] Route handlers are thin and delegate business logic to service layer
 - [ ] Pydantic models are used for request/response validation
 - [ ] HTTPException is raised for error cases rather than returning error dicts
+- [ ] Test data isolation is maintained (test cache files separate from production)
+- [ ] Tests do not access production cache files or data directories
 
 ## References
 

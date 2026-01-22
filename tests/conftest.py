@@ -96,6 +96,48 @@ def reset_settings():
     wpm_backend.config._settings = None
 
 
+@pytest.fixture(autouse=True)
+def configure_test_cache(tmp_path, monkeypatch):
+    """Configure wpm library to use test-specific cache directory.
+    
+    This fixture ensures all wpm library cache files are isolated from
+    production cache files. It patches wpm.config.Config to use a
+    temporary test cache directory.
+    """
+    import wpm.config
+    
+    # Create test cache directory in temporary path
+    test_cache_dir = tmp_path / ".wpm-test"
+    test_cache_dir.mkdir(exist_ok=True)
+    
+    # Patch Config class variables to use test cache directory
+    monkeypatch.setattr(wpm.config.Config, "CACHE_DIR", test_cache_dir)
+    monkeypatch.setattr(
+        wpm.config.Config, 
+        "CACHE_FILE", 
+        test_cache_dir / "price_cache.parquet"
+    )
+    monkeypatch.setattr(
+        wpm.config.Config,
+        "HISTORICAL_CACHE_FILE",
+        test_cache_dir / "historical_price_cache.parquet"
+    )
+    monkeypatch.setattr(
+        wpm.config.Config,
+        "ASSET_METADATA_CACHE_FILE",
+        test_cache_dir / "asset_metadata_cache.parquet"
+    )
+    monkeypatch.setattr(
+        wpm.config.Config,
+        "CURRENCY_CACHE_FILE",
+        test_cache_dir / "currency_cache.parquet"
+    )
+    
+    yield test_cache_dir
+    
+    # Cleanup: cache files are automatically cleaned up by tmp_path fixture
+
+
 @pytest.fixture
 def app(test_settings):
     """FastAPI app fixture with test settings."""
