@@ -66,6 +66,12 @@ class PortfolioAssetTradesResponse(BaseModel):
     trades: Page[Trade] = Field(..., description="Paginated list of trades")
 
 
+class PortfolioAssetTradesAllResponse(BaseModel):
+    """Response model for /portfolio/trades/{ticker}/all endpoint with all trades (no pagination)."""
+
+    trades: list[Trade] = Field(..., description="List of all trades")
+
+
 class PortfolioResponse(BaseModel):
     """Response model for portfolio endpoints."""
 

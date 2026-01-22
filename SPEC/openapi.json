@@ -294,6 +294,126 @@
         }
       }
     },
+    "/portfolio/trades/{ticker}/all": {
+      "get": {
+        "summary": "Get Asset Trades All Endpoint",
+        "description": "GET endpoint to retrieve all trades for a specific asset ticker without pagination, with date filtering and sorting support.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    start_date: Optional start date for filtering trades (ISO format YYYY-MM-DD, inclusive)\n    end_date: Optional end date for filtering trades (ISO format YYYY-MM-DD, inclusive)\n    sort_by: Field to sort by (default: \"date\")\n    sort_order: Sort order - \"asc\" or \"desc\" (default: \"asc\")\n\nReturns:\n    PortfolioAssetTradesAllResponse containing all trades (no pagination)\n\nRaises:\n    HTTPException: 400 if date format is invalid, start_date > end_date, or sort_by field is invalid\n    HTTPException: 404 if ticker is not found\n    HTTPException: 500 if portfolio data is not available",
+        "operationId": "get_asset_trades_all_endpoint_portfolio_trades__ticker__all_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticker"
+            }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start date for filtering (ISO format YYYY-MM-DD)",
+              "title": "Start Date"
+            },
+            "description": "Start date for filtering (ISO format YYYY-MM-DD)"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End date for filtering (ISO format YYYY-MM-DD)",
+              "title": "End Date"
+            },
+            "description": "End date for filtering (ISO format YYYY-MM-DD)"
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Field to sort by",
+              "default": "date",
+              "title": "Sort By"
+            },
+            "description": "Field to sort by"
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(asc|desc)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort order: 'asc' or 'desc'",
+              "default": "asc",
+              "title": "Sort Order"
+            },
+            "description": "Sort order: 'asc' or 'desc'"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioAssetTradesAllResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/portfolio/lots/{ticker}": {
       "get": {
         "summary": "Get Asset Lots Endpoint",
@@ -1320,6 +1440,24 @@
         ],
         "title": "PortfolioAssetLotsResponse",
         "description": "Response model for /portfolio/lots/<ticker> endpoint with paginated lots and position data."
+      },
+      "PortfolioAssetTradesAllResponse": {
+        "properties": {
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/Trade"
+            },
+            "type": "array",
+            "title": "Trades",
+            "description": "List of all trades"
+          }
+        },
+        "type": "object",
+        "required": [
+          "trades"
+        ],
+        "title": "PortfolioAssetTradesAllResponse",
+        "description": "Response model for /portfolio/trades/{ticker}/all endpoint with all trades (no pagination)."
       },
       "PortfolioAssetTradesResponse": {
         "properties": {
