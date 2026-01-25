@@ -10,7 +10,7 @@ from wpm.models import Asset, Position as WPMPosition, Trade as WPMTrade
 from wpm.portfolio import CompositePortfolio, fetch_price_map, get_historical_performance, get_positions_with_allocations
 from wpm.pricing import PriceService
 
-from wpm_backend.models.portfolio import AssetPriceHistoryResponse, BrokerPosition, Lot, MatchedSell, OverallPosition, PortfolioHistoryPoint, Position, PricePoint, Trade
+from wpm_backend.models.portfolio import AllocationPosition, AssetPriceHistoryResponse, BrokerPosition, Lot, MatchedSell, OverallPosition, PortfolioHistoryPoint, Position, PricePoint, Trade
 from wpm_backend.services.portfolio_utils import (
     _get_month_start_dates,
     _get_weekly_dates,
@@ -1103,3 +1103,136 @@ def get_asset_price_history(
         prices=price_points,
         current_price=current_price
     )
+
+
+def get_portfolio_allocation(
+    composite: CompositePortfolio,
+    price_service: PriceService,
+    asset_service: AssetService,
+    asset_types: Optional[List[str]] = None,
+    tickers: Optional[List[str]] = None,
+) -> List[AllocationPosition]:
+    """
+    Retrieve filtered portfolio positions with metadata for the allocation endpoint.
+
+    Args:
+        composite: CompositePortfolio instance from wpm library
+        price_service: PriceService instance for fetching current prices
+        asset_service: AssetService instance for retrieving metadata
+        asset_types: Optional list of asset types to filter by (e.g., ["Stock", "ETF", "Crypto"])
+        tickers: Optional list of ticker symbols to filter by (e.g., ["AAPL", "GOOG"])
+
+    Returns:
+        List of AllocationPosition API models with metadata included
+
+    Note:
+        Filtering uses OR logic: assets are included if they match any specified asset_type OR any specified ticker.
+        Allocations are automatically recalculated against the filtered asset list only by the wpm library.
+    """
+    logger.info(
+        f"Retrieving portfolio allocation with filters: asset_types={asset_types}, tickers={tickers}"
+    )
+
+    # Fetch current prices first (needed for get_positions_with_allocations)
+    logger.info("Fetching current prices for all assets")
+    price_map = fetch_price_map(composite, price_service)
+    logger.info(f"Fetched prices for {len(price_map)} assets")
+
+    # Get positions with allocations from composite portfolio (with filtering if provided)
+    positions_with_allocations = get_positions_with_allocations(
+        composite, price_map, asset_types=asset_types, asset_tickers=tickers
+    )
+    logger.info(
+        f"Retrieved {len(positions_with_allocations)} positions with allocations from composite portfolio"
+    )
+
+    # Transform wpm Position objects to API AllocationPosition models
+    api_positions = []
+    for asset, (wpm_position, allocation_decimal) in positions_with_allocations.items():
+        try:
+            # Get current price (may be None)
+            current_price = price_map.get(asset)
+
+            # Calculate average price from cost_basis and quantity
+            quantity_float = float(wpm_position.quantity)
+            average_price = (
+                float(wpm_position.cost_basis) / quantity_float if quantity_float > 0 else 0.0
+            )
+
+            # Calculate market_value if price is available
+            market_value = None
+            if current_price is not None:
+                market_value = quantity_float * current_price
+
+            # Calculate unrealized_gain_loss if market_value is available
+            unrealized_gain_loss = None
+            if market_value is not None:
+                unrealized_gain_loss = market_value - float(wpm_position.cost_basis)
+
+            # Convert allocation from Decimal to float
+            allocation_percentage = float(allocation_decimal) if allocation_decimal is not None else None
+
+            # Get realized P/L for this asset
+            realized_gain_loss = composite.get_asset_realized_pnl(asset.ticker)
+
+            # Create API AllocationPosition model (metadata will be added later)
+            api_position = AllocationPosition(
+                ticker=asset.ticker,
+                asset_type=asset.asset_type,
+                quantity=quantity_float,
+                average_price=average_price,
+                cost_basis=float(wpm_position.cost_basis),
+                cost_basis_method=wpm_position.cost_basis_method,
+                current_price=current_price,
+                market_value=market_value,
+                unrealized_gain_loss=unrealized_gain_loss,
+                allocation_percentage=allocation_percentage,
+                realized_gain_loss=realized_gain_loss,
+                metadata=None,  # Will be populated from batch metadata retrieval
+            )
+            api_positions.append(api_position)
+        except Exception as e:
+            logger.error(f"Error transforming position for asset {asset.ticker}: {e}", exc_info=True)
+            continue
+
+    logger.info(f"Transformed {len(api_positions)} positions to API models")
+
+    # Extract filtered tickers and group by asset_type for batch metadata retrieval
+    if api_positions:
+        tickers_by_asset_type: Dict[str, List[str]] = {}
+        for position in api_positions:
+            asset_type = position.asset_type
+            if asset_type not in tickers_by_asset_type:
+                tickers_by_asset_type[asset_type] = []
+            tickers_by_asset_type[asset_type].append(position.ticker)
+
+        logger.info(
+            f"Grouped {len([t for tickers in tickers_by_asset_type.values() for t in tickers])} tickers into {len(tickers_by_asset_type)} asset types: {list(tickers_by_asset_type.keys())}"
+        )
+
+        # Retrieve metadata for each asset_type group
+        all_metadata: Dict[str, Optional[Dict[str, Any]]] = {}
+        for asset_type, ticker_list in tickers_by_asset_type.items():
+            logger.info(f"Retrieving metadata for {len(ticker_list)} tickers of asset_type: {asset_type}")
+            try:
+                metadata_batch = asset_service.get_metadata_batch(ticker_list, asset_type)
+                all_metadata.update(metadata_batch)
+                logger.info(
+                    f"Successfully retrieved metadata for {len([m for m in metadata_batch.values() if m is not None])} out of {len(ticker_list)} tickers"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error retrieving metadata batch for asset_type {asset_type}: {e}", exc_info=True
+                )
+                # Set None for all tickers in this group if batch retrieval fails
+                for ticker in ticker_list:
+                    all_metadata[ticker] = None
+
+        # Merge metadata into AllocationPosition objects
+        for position in api_positions:
+            position.metadata = all_metadata.get(position.ticker)
+
+        logger.info(f"Merged metadata for {len(api_positions)} positions")
+
+    logger.info(f"Returning {len(api_positions)} allocation positions with metadata")
+    return api_positions

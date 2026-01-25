@@ -1149,7 +1149,7 @@ wheels = [
 [[package]]
 name = "waiz-wpm"
 version = "0.0.0"
-source = { git = "https://github.com/waigore/wpmv2.git?rev=dev#159edb2ec33389620b5de88b4ada76c70e711d6f" }
+source = { git = "https://github.com/waigore/wpmv2.git?rev=dev#1f944ca522c8439ab4a99a5a49f0d54b0235443c" }
 dependencies = [
     { name = "pandas" },
     { name = "pandas-market-calendars" },

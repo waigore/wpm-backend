@@ -16,8 +16,8 @@ from wpm.pricing import PriceService
 from wpm_backend.auth.auth import authenticate_user, create_access_token, verify_token
 from wpm_backend.config import Settings, get_settings
 from wpm_backend.models.auth import LoginRequest, LoginResponse
-from wpm_backend.models.portfolio import AssetBrokersResponse, AssetMetadataAllResponse, AssetMetadataResponse, AssetPriceHistoryResponse, PortfolioHistoryPoint, PortfolioPerformanceResponse, Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesAllResponse, PortfolioAssetTradesResponse
-from wpm_backend.services.portfolio_service import apply_granularity_filter, get_all_asset_metadata, get_all_positions, get_asset_brokers, get_asset_lots, get_asset_metadata, get_asset_positions_by_broker, get_asset_price_history, get_asset_trades, get_cached_portfolio_performance, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
+from wpm_backend.models.portfolio import AllocationPosition, AssetBrokersResponse, AssetMetadataAllResponse, AssetMetadataResponse, AssetPriceHistoryResponse, PortfolioAllocationResponse, PortfolioHistoryPoint, PortfolioPerformanceResponse, Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesAllResponse, PortfolioAssetTradesResponse
+from wpm_backend.services.portfolio_service import apply_granularity_filter, get_all_asset_metadata, get_all_positions, get_asset_brokers, get_asset_lots, get_asset_metadata, get_asset_positions_by_broker, get_asset_price_history, get_asset_trades, get_cached_portfolio_performance, get_portfolio_allocation, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +272,81 @@ def get_all_positions_endpoint(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
+        )
+
+
+@router.get("/portfolio/allocation", response_model=PortfolioAllocationResponse)
+def get_portfolio_allocation_endpoint(
+    username: str = Depends(get_current_user),
+    composite_portfolio: CompositePortfolio = Depends(get_composite_portfolio),
+    price_service: PriceService = Depends(get_price_service),
+    asset_service: AssetService = Depends(get_asset_service),
+    asset_types: Optional[str] = Query(None, description="Comma-separated list of asset types to filter by (e.g., 'Stock,ETF')"),
+    tickers: Optional[str] = Query(None, description="Comma-separated list of ticker symbols to filter by (e.g., 'AAPL,GOOG')"),
+) -> PortfolioAllocationResponse:
+    """
+    GET endpoint to retrieve filtered portfolio positions with metadata for allocation display.
+
+    Requires JWT authentication.
+
+    Args:
+        username: Authenticated username (from token)
+        composite_portfolio: Composite portfolio instance (injected via dependency)
+        price_service: Price service instance (injected via dependency)
+        asset_service: Asset service instance (injected via dependency)
+        asset_types: Optional comma-separated list of asset types to filter by (e.g., "Stock,ETF")
+        tickers: Optional comma-separated list of ticker symbols to filter by (e.g., "AAPL,GOOG")
+
+    Returns:
+        PortfolioAllocationResponse containing list of filtered positions with metadata
+
+    Raises:
+        HTTPException: 400 if parameter format is invalid
+        HTTPException: 500 if portfolio or services are unavailable
+
+    Note:
+        Filtering uses OR logic: assets are included if they match any specified asset_type OR any specified ticker.
+        Allocations are automatically recalculated against the filtered asset list only (sum to 100% of filtered assets).
+    """
+    logger.info(
+        f"Portfolio allocation request received from user: {username}, "
+        f"asset_types={asset_types}, tickers={tickers}"
+    )
+
+    # Parse comma-separated query parameters into lists
+    asset_types_list = None
+    if asset_types:
+        asset_types_list = [at.strip() for at in asset_types.split(",") if at.strip()]
+        if not asset_types_list:
+            asset_types_list = None
+
+    tickers_list = None
+    if tickers:
+        tickers_list = [t.strip() for t in tickers.split(",") if t.strip()]
+        if not tickers_list:
+            tickers_list = None
+
+    try:
+        # Get filtered positions with metadata
+        assets = get_portfolio_allocation(
+            composite_portfolio,
+            price_service,
+            asset_service,
+            asset_types=asset_types_list,
+            tickers=tickers_list,
+        )
+
+        logger.info(
+            f"Portfolio allocation response sent to user: {username}, "
+            f"assets_count={len(assets)}"
+        )
+
+        return PortfolioAllocationResponse(assets=assets)
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving portfolio allocation: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error while retrieving portfolio allocation",
         )
 
 

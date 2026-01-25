@@ -147,6 +147,78 @@
         }
       }
     },
+    "/portfolio/allocation": {
+      "get": {
+        "summary": "Get Portfolio Allocation Endpoint",
+        "description": "GET endpoint to retrieve filtered portfolio positions with metadata for allocation display.\n\nRequires JWT authentication.\n\nArgs:\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n    asset_service: Asset service instance (injected via dependency)\n    asset_types: Optional comma-separated list of asset types to filter by (e.g., \"Stock,ETF\")\n    tickers: Optional comma-separated list of ticker symbols to filter by (e.g., \"AAPL,GOOG\")\n\nReturns:\n    PortfolioAllocationResponse containing list of filtered positions with metadata\n\nRaises:\n    HTTPException: 400 if parameter format is invalid\n    HTTPException: 500 if portfolio or services are unavailable\n\nNote:\n    Filtering uses OR logic: assets are included if they match any specified asset_type OR any specified ticker.\n    Allocations are automatically recalculated against the filtered asset list only (sum to 100% of filtered assets).",
+        "operationId": "get_portfolio_allocation_endpoint_portfolio_allocation_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_types",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated list of asset types to filter by (e.g., 'Stock,ETF')",
+              "title": "Asset Types"
+            },
+            "description": "Comma-separated list of asset types to filter by (e.g., 'Stock,ETF')"
+          },
+          {
+            "name": "tickers",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated list of ticker symbols to filter by (e.g., 'AAPL,GOOG')",
+              "title": "Tickers"
+            },
+            "description": "Comma-separated list of ticker symbols to filter by (e.g., 'AAPL,GOOG')"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioAllocationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/portfolio/trades/{ticker}": {
       "get": {
         "summary": "Get Asset Trades Endpoint",
@@ -862,6 +934,130 @@
   },
   "components": {
     "schemas": {
+      "AllocationPosition": {
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "title": "Ticker",
+            "description": "Stock ticker symbol or asset identifier"
+          },
+          "asset_type": {
+            "type": "string",
+            "title": "Asset Type",
+            "description": "Type of asset (e.g., 'Stock', 'Crypto', 'Bond')"
+          },
+          "quantity": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Quantity",
+            "description": "Number of shares/units held"
+          },
+          "average_price": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Average Price",
+            "description": "Average purchase price per share/unit"
+          },
+          "cost_basis": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Cost Basis",
+            "description": "Total cost basis of the position in USD"
+          },
+          "cost_basis_method": {
+            "type": "string",
+            "title": "Cost Basis Method",
+            "description": "Method used to calculate cost basis ('fifo' or 'average')"
+          },
+          "current_price": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Price",
+            "description": "Current market price per share/unit in USD"
+          },
+          "market_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Value",
+            "description": "Current total market value of the position in USD"
+          },
+          "unrealized_gain_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Gain Loss",
+            "description": "Unrealized gain or loss on the position in USD"
+          },
+          "allocation_percentage": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allocation Percentage",
+            "description": "Percentage allocation of this asset in the portfolio (0.00-100.00)"
+          },
+          "realized_gain_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Gain Loss",
+            "description": "Realized gain or loss on the position in USD"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata",
+            "description": "Asset metadata (sector, industry, etc.) if available"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticker",
+          "asset_type",
+          "quantity",
+          "average_price",
+          "cost_basis",
+          "cost_basis_method"
+        ],
+        "title": "AllocationPosition",
+        "description": "Position model extended with metadata for allocation endpoint."
+      },
       "AssetBrokersResponse": {
         "properties": {
           "ticker": {
@@ -1412,6 +1608,24 @@
         ],
         "title": "PortfolioAllResponse",
         "description": "Response model for /portfolio/all endpoint with paginated positions and portfolio totals."
+      },
+      "PortfolioAllocationResponse": {
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/AllocationPosition"
+            },
+            "type": "array",
+            "title": "Assets",
+            "description": "List of filtered portfolio positions with metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assets"
+        ],
+        "title": "PortfolioAllocationResponse",
+        "description": "Response model for /portfolio/allocation endpoint."
       },
       "PortfolioAssetLotsResponse": {
         "properties": {

@@ -190,3 +190,19 @@ class AssetPriceHistoryResponse(BaseModel):
     prices: list[PricePoint] = Field(..., description="Historical price points")
     current_price: Optional[float] = Field(None, ge=0, description="Current market price in USD")
 
+
+class AllocationPosition(Position):
+    """Position model extended with metadata for allocation endpoint."""
+
+    metadata: Optional[Dict[str, Any]] = Field(
+        None, description="Asset metadata (sector, industry, etc.) if available"
+    )
+
+
+class PortfolioAllocationResponse(BaseModel):
+    """Response model for /portfolio/allocation endpoint."""
+
+    assets: list[AllocationPosition] = Field(
+        ..., description="List of filtered portfolio positions with metadata"
+    )
+
