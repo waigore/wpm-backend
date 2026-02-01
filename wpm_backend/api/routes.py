@@ -17,7 +17,7 @@ from wpm_backend.auth.auth import authenticate_user, create_access_token, verify
 from wpm_backend.config import Settings, get_settings
 from wpm_backend.models.auth import LoginRequest, LoginResponse
 from wpm_backend.models.portfolio import AllocationPosition, AssetBrokersResponse, AssetMetadataAllResponse, AssetMetadataResponse, AssetPriceHistoryResponse, PortfolioAllocationResponse, PortfolioHistoryPoint, PortfolioPerformanceResponse, Position, PortfolioAllResponse, PortfolioAssetLotsResponse, PortfolioAssetTradesAllResponse, PortfolioAssetTradesResponse
-from wpm_backend.services.portfolio_service import apply_granularity_filter, get_all_asset_metadata, get_all_positions, get_asset_brokers, get_asset_lots, get_asset_metadata, get_asset_positions_by_broker, get_asset_price_history, get_asset_trades, get_cached_portfolio_performance, get_portfolio_allocation, get_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
+from wpm_backend.services.portfolio_service import apply_granularity_filter, get_all_asset_metadata, get_all_positions, get_asset_brokers, get_asset_lots, get_asset_metadata, get_asset_positions_by_broker, get_asset_price_history, get_asset_trades, get_cached_portfolio_performance, get_portfolio_allocation, get_portfolio_performance, get_reference_portfolio_performance, VALID_LOT_SORT_FIELDS, VALID_SORT_FIELDS, VALID_TRADE_SORT_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -1050,6 +1050,146 @@ def get_portfolio_performance_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error while retrieving portfolio performance",
+        )
+
+
+@router.get("/reference/{ticker}/performance", response_model=PortfolioPerformanceResponse)
+def get_reference_performance_endpoint(
+    ticker: str,
+    username: str = Depends(get_current_user),
+    composite_portfolio: CompositePortfolio = Depends(get_composite_portfolio),
+    price_service: PriceService = Depends(get_price_service),
+    asset_type: str = Query(
+        ...,
+        description="Asset type for the reference ticker (e.g., 'Stock', 'ETF', 'Crypto')",
+    ),
+    start_date: Optional[str] = Query(None, description="Start date for performance tracking (ISO format YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date for performance tracking (ISO format YYYY-MM-DD)"),
+    granularity: str = Query("daily", pattern="^(daily|weekly|monthly)$", description="Granularity of history points: 'daily' (default), 'weekly' (Monday-based), or 'monthly' (start of month)"),
+) -> PortfolioPerformanceResponse:
+    """
+    GET endpoint to retrieve historical performance data for a reference portfolio based on a single ticker asset.
+
+    Creates a reference portfolio using BuyAndHoldStrategy that converts all trades in the original
+    portfolio to trades in the specified reference ticker asset, then retrieves historical performance.
+
+    Requires JWT authentication.
+
+    Args:
+        ticker: Asset ticker symbol to use as reference asset
+        username: Authenticated username (from token)
+        composite_portfolio: Composite portfolio instance (injected via dependency)
+        price_service: Price service instance (injected via dependency)
+        asset_type: Asset type for the reference ticker (e.g., 'Stock', 'ETF', 'Crypto')
+        start_date: Optional start date for performance tracking (ISO format YYYY-MM-DD, defaults to portfolio start_date)
+        end_date: Optional end date for performance tracking (ISO format YYYY-MM-DD, defaults to today)
+        granularity: Granularity level - "daily" (default), "weekly" (Monday-based), or "monthly" (start of month)
+
+    Returns:
+        PortfolioPerformanceResponse containing filtered list of PortfolioHistoryPoint objects
+
+    Raises:
+        HTTPException: 400 if date format is invalid, date range is invalid, granularity is invalid, or asset_type is invalid
+        HTTPException: 422 if granularity value is invalid (handled by FastAPI Query validation)
+        HTTPException: 500 for unexpected errors or if percentage_return is unavailable in history points
+    """
+    logger.info(
+        f"Reference performance request received from user: {username}, ticker={ticker}, "
+        f"asset_type={asset_type}, start_date={start_date}, end_date={end_date}, granularity={granularity}"
+    )
+    
+    # Basic validation for asset_type to guard against obvious invalid values
+    normalized_asset_type = asset_type.strip()
+    if not normalized_asset_type:
+        logger.warning("Empty asset_type provided for reference performance")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="asset_type is required and must be a non-empty string",
+        )
+
+    # Get portfolio start_date
+    portfolio_start_date = composite_portfolio.start_date
+    if portfolio_start_date is None:
+        logger.warning("Portfolio has no start_date, cannot retrieve performance data")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Portfolio has no start date (no trades found)",
+        )
+    
+    # Parse start_date if provided, otherwise use portfolio start_date
+    if start_date is not None:
+        start_date_obj = _parse_date_string(start_date, "start_date")
+    else:
+        start_date_obj = portfolio_start_date
+    
+    # Parse end_date if provided, default to today if not provided
+    if end_date is not None:
+        end_date_obj = _parse_date_string(end_date, "end_date")
+    else:
+        end_date_obj = date.today()
+    
+    # Clamp dates to portfolio start_date if they are before it (no error thrown)
+    if start_date_obj < portfolio_start_date:
+        start_date_obj = portfolio_start_date
+    if end_date_obj < portfolio_start_date:
+        end_date_obj = portfolio_start_date
+    
+    # Validate date range (after clamping)
+    if end_date_obj < start_date_obj:
+        logger.warning(f"Invalid date range: end_date={end_date_obj} < start_date={start_date_obj}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"end_date ({end_date_obj}) must be greater than or equal to start_date ({start_date_obj})",
+        )
+    
+    try:
+        # Get reference portfolio performance (always calculated on-demand, no caching)
+        history_points = get_reference_portfolio_performance(
+            composite_portfolio,
+            ticker,
+            normalized_asset_type,
+            price_service,
+            start_date_obj,
+            end_date_obj,
+        )
+        
+        # Apply granularity filter
+        filtered_points = apply_granularity_filter(
+            history_points,
+            start_date_obj,
+            end_date_obj,
+            granularity,
+        )
+        
+        logger.info(
+            f"Reference performance response sent to user: {username}, ticker={ticker}, "
+            f"granularity={granularity}, history_points_count={len(filtered_points)}, "
+            f"start_date={start_date_obj}, end_date={end_date_obj}"
+        )
+        
+        return PortfolioPerformanceResponse(history_points=filtered_points)
+    except ValueError as e:
+        # Handle validation errors from service layer
+        error_str = str(e)
+        logger.warning(f"Error retrieving reference portfolio performance: {e}")
+        
+        # Check if error is about percentage_return being unavailable
+        if "percentage_return is unavailable" in error_str:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Data integrity error: percentage_return is unavailable in history points",
+            )
+        
+        # Other ValueError cases (e.g., invalid date range or asset_type handling in service layer)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_str,
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving reference portfolio performance: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error while retrieving reference portfolio performance",
         )
 
 

@@ -2,6 +2,7 @@
 
 from io import StringIO
 from unittest.mock import MagicMock, Mock, patch
+from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
@@ -573,3 +574,152 @@ def test_portfolio_all_command_displays_negative_realized_pnl(cli_instance):
     assert "-$500.00" in output or "-500.00" in output
     # Verify no + sign before negative value
     assert "+-$500.00" not in output
+
+
+def test_reference_performance_command_minimal_args(cli_instance):
+    """Test ref command with minimal args uses today's date and no granularity."""
+    # Setup authentication
+    login_response = cli_instance.client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    cli_instance.token = login_response.json()["access_token"]
+
+    # Mock the API response
+    mock_history_points = [{"date": f"2024-01-{day:02d}"} for day in range(1, 15)]
+    mock_response = {"history_points": mock_history_points}
+
+    today_iso = date.today().isoformat()
+
+    # Mock the client.get method
+    with patch.object(cli_instance.client, "get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = mock_response
+
+        # Capture output
+        with patch("sys.stdout", new=StringIO()) as fake_out:
+            # Invoke via command parser to exercise argument handling
+            with patch("builtins.input", side_effect=["ref SPY ETF", "exit"]):
+                cli_instance.run()
+            output = fake_out.getvalue()
+
+        # Verify API called with today's date and no granularity
+        mock_get.assert_any_call(
+            f"/reference/SPY/performance?asset_type=ETF&end_date={today_iso}",
+            headers={"Authorization": f"Bearer {cli_instance.token}"},
+        )
+
+    # Verify output shows last 10 points and note about truncation
+    assert "PORTFOLIO PERFORMANCE (Last 10 Points)" in output
+    assert '"date": "2024-01-14"' in output
+    assert "Note: Showing last 10 of 14 total history points" in output
+
+
+def test_reference_performance_command_with_end_date_only(cli_instance):
+    """Test ref command with explicit end_date only."""
+    # Setup authentication
+    login_response = cli_instance.client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    cli_instance.token = login_response.json()["access_token"]
+
+    mock_response = {"history_points": []}
+
+    with patch.object(cli_instance.client, "get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = mock_response
+
+        with patch("sys.stdout", new=StringIO()):
+            with patch("builtins.input", side_effect=["ref SPY ETF 2024-01-31", "exit"]):
+                cli_instance.run()
+
+        mock_get.assert_any_call(
+            "/reference/SPY/performance?asset_type=ETF&end_date=2024-01-31",
+            headers={"Authorization": f"Bearer {cli_instance.token}"},
+        )
+
+
+def test_reference_performance_command_with_granularity_only(cli_instance):
+    """Test ref command with granularity only."""
+    # Setup authentication
+    login_response = cli_instance.client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    cli_instance.token = login_response.json()["access_token"]
+
+    mock_response = {"history_points": []}
+
+    today_iso = date.today().isoformat()
+
+    with patch.object(cli_instance.client, "get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = mock_response
+
+        with patch("sys.stdout", new=StringIO()):
+            with patch("builtins.input", side_effect=["ref SPY ETF weekly", "exit"]):
+                cli_instance.run()
+
+        mock_get.assert_any_call(
+            f"/reference/SPY/performance?asset_type=ETF&end_date={today_iso}&granularity=weekly",
+            headers={"Authorization": f"Bearer {cli_instance.token}"},
+        )
+
+
+def test_reference_performance_command_with_end_date_and_granularity(cli_instance):
+    """Test ref command with both end_date and granularity."""
+    # Setup authentication
+    login_response = cli_instance.client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    assert login_response.status_code == 200
+    cli_instance.token = login_response.json()["access_token"]
+
+    mock_response = {"history_points": []}
+
+    with patch.object(cli_instance.client, "get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = mock_response
+
+        with patch("sys.stdout", new=StringIO()):
+            with patch(
+                "builtins.input",
+                side_effect=["ref SPY ETF 2024-01-31 monthly", "exit"],
+            ):
+                cli_instance.run()
+
+        mock_get.assert_any_call(
+            "/reference/SPY/performance?asset_type=ETF&end_date=2024-01-31&granularity=monthly",
+            headers={"Authorization": f"Bearer {cli_instance.token}"},
+        )
+
+
+def test_reference_performance_command_not_logged_in(cli_instance):
+    """Test ref command when not logged in."""
+    cli_instance.token = None
+
+    with patch.object(cli_instance.client, "get") as mock_get:
+        with patch("sys.stdout", new=StringIO()) as fake_out:
+            with patch("builtins.input", side_effect=["ref SPY ETF", "exit"]):
+                cli_instance.run()
+            output = fake_out.getvalue()
+
+        # Ensure no API call was made
+        mock_get.assert_not_called()
+
+    assert "Error: Not logged in" in output
+    assert "login" in output.lower()
+
+
+def test_help_includes_ref_command(cli_instance):
+    """Test that help command includes ref command."""
+    with patch("sys.stdout", new=StringIO()) as fake_out:
+        cli_instance.show_help()
+        output = fake_out.getvalue()
+
+    assert "ref <ticker> <asset_type> [YYYY-MM-DD] [granularity]" in output

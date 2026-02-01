@@ -47,16 +47,32 @@ def _transform_history_points_to_cache(
             # Extract prices (already Dict[str, float])
             prices = wpm_history_point.prices
             
+            # Extract percentage_return and validate it's not None
+            if wpm_history_point.percentage_return is None:
+                logger.error(f"percentage_return is unavailable for history point at date {history_date_str}")
+                raise ValueError(f"percentage_return is unavailable for history point at date {history_date_str}")
+            percentage_return = float(wpm_history_point.percentage_return)
+            
             # Create API PortfolioHistoryPoint model
             api_history_point = PortfolioHistoryPoint(
                 date=history_date_str,
                 total_market_value=total_market_value,
                 asset_positions=asset_positions,
                 prices=prices,
+                percentage_return=percentage_return,
             )
             
             # Store in cache dictionary keyed by date string
             performance_cache[history_date_str] = api_history_point
+        except ValueError as e:
+            # Re-raise ValueError for percentage_return issues (data integrity)
+            error_str = str(e)
+            if "percentage_return is unavailable" in error_str:
+                logger.error(f"Error transforming history point: {e}", exc_info=True)
+                raise
+            # For other ValueErrors, log and continue
+            logger.error(f"Error transforming history point: {e}", exc_info=True)
+            continue
         except Exception as e:
             logger.error(f"Error transforming history point: {e}", exc_info=True)
             continue

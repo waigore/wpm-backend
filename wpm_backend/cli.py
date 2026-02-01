@@ -458,6 +458,70 @@ class InteractiveCLI:
         except Exception as e:
             print(f"Error: Failed to connect to API: {e}")
 
+    def reference_performance_command(self, ticker: str, asset_type: str, end_date: Optional[str] = None, granularity: Optional[str] = None) -> None:
+        """Call /reference/{ticker}/performance endpoint and display last 10 history points."""
+        if not self.token:
+            print("Error: Not logged in. Please run 'login' first.")
+            return
+
+        # Default to today if end_date is not provided
+        if end_date is None:
+            end_date = date.today().isoformat()
+
+        # Build query parameters
+        query_params = f"asset_type={asset_type}&end_date={end_date}"
+        if granularity is not None:
+            query_params += f"&granularity={granularity}"
+
+        # Call reference/{ticker}/performance endpoint with authentication
+        try:
+            response = self.client.get(
+                f"/reference/{ticker}/performance?{query_params}",
+                headers={"Authorization": f"Bearer {self.token}"},
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Extract history points
+                history_points = data.get("history_points", [])
+                
+                # Display last 10 points only
+                last_10_points = history_points[-10:] if len(history_points) > 10 else history_points
+                
+                print("\nPORTFOLIO PERFORMANCE (Last 10 Points)")
+                print("-" * 60)
+                print(json.dumps(last_10_points, indent=2))
+                
+                if len(history_points) > 10:
+                    print(f"\nNote: Showing last 10 of {len(history_points)} total history points")
+            elif response.status_code == 401:
+                print("Error: Authentication failed. Token may be expired. Please run 'login' again.")
+                self.token = None  # Clear invalid token
+            elif response.status_code == 400:
+                print("Error: Invalid request parameters.")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+            elif response.status_code == 500:
+                print("Error: Server error. Reference portfolio data may not be available.")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+            else:
+                print(f"Error: Request failed with status code {response.status_code}")
+                try:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    print(f"Details: {error_detail}")
+                except Exception:
+                    print(f"Response: {response.text}")
+        except Exception as e:
+            print(f"Error: Failed to connect to API: {e}")
+
     def status_command(self) -> None:
         """Check the status of portfolio data and services."""
         print("\nApplication Status:")
@@ -498,6 +562,7 @@ class InteractiveCLI:
         print("  prices <ticker> [start_date] [end_date] - Get historical price data for an asset ticker (requires login, dates in ISO format YYYY-MM-DD)")
         print("  metadata <ticker1> [ticker2] ... - Get metadata for one or more asset tickers (requires login)")
         print("  performance [YYYY-MM-DD] [granularity] - Get portfolio performance up to date (requires login, defaults to today, optional granularity: daily/weekly/monthly)")
+        print("  ref <ticker> <asset_type> [YYYY-MM-DD] [granularity] - Get reference portfolio performance for a ticker/asset_type pair (requires login, defaults end date to today, optional granularity: daily/weekly/monthly)")
         print("  status          - Check application status (portfolio data, services)")
         print("  help            - Show this help message")
         print("  exit, quit      - Exit the CLI")
@@ -580,6 +645,32 @@ class InteractiveCLI:
                     else:
                         # Call without arguments to use default (today, daily)
                         self.performance_command()
+                elif cmd == "ref":
+                    if len(parts) < 3:
+                        print("Error: Ticker and asset_type are required. Usage: ref <ticker> <asset_type> [YYYY-MM-DD] [granularity]")
+                    elif len(parts) > 5:
+                        print("Error: Too many arguments. Usage: ref <ticker> <asset_type> [YYYY-MM-DD] [granularity]")
+                    else:
+                        ticker = parts[1]
+                        asset_type = parts[2]
+                        end_date_arg: Optional[str] = None
+                        granularity_arg: Optional[str] = None
+
+                        if len(parts) == 4:
+                            # Single optional argument after asset_type: could be end_date or granularity
+                            arg = parts[3]
+                            try:
+                                date.fromisoformat(arg)
+                                end_date_arg = arg
+                            except ValueError:
+                                granularity_arg = arg
+                        elif len(parts) == 5:
+                            # Two optional arguments: end_date and granularity
+                            end_date_arg = parts[3]
+                            granularity_arg = parts[4]
+                        # len(parts) == 3 -> no optional arguments, use defaults
+
+                        self.reference_performance_command(ticker, asset_type, end_date_arg, granularity_arg)
                 elif cmd == "status":
                     self.status_command()
                 else:

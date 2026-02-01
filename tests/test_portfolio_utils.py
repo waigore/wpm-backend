@@ -91,6 +91,7 @@ def test_apply_granularity_filter_daily():
                 total_market_value=25000.0 + (i * 100),
                 asset_positions={"AAPL": 17550.0},
                 prices={"AAPL": 175.50},
+                percentage_return=10.0 + (i * 0.5),
             )
         )
     
@@ -124,6 +125,7 @@ def test_apply_granularity_filter_weekly_monday_start():
                 total_market_value=25000.0 + (i * 100),
                 asset_positions={"AAPL": 17550.0},
                 prices={"AAPL": 175.50},
+                percentage_return=10.0 + (i * 0.5),
             )
         )
     
@@ -161,6 +163,7 @@ def test_apply_granularity_filter_weekly_non_monday_start():
                 total_market_value=25000.0 + (i * 100),
                 asset_positions={"AAPL": 17550.0},
                 prices={"AAPL": 175.50},
+                percentage_return=10.0 + (i * 0.5),
             )
         )
     
@@ -198,6 +201,7 @@ def test_apply_granularity_filter_weekly_sunday_start():
                 total_market_value=25000.0 + (i * 100),
                 asset_positions={"AAPL": 17550.0},
                 prices={"AAPL": 175.50},
+                percentage_return=10.0 + (i * 0.5),
             )
         )
     
@@ -236,6 +240,7 @@ def test_apply_granularity_filter_monthly_first_of_month():
                 total_market_value=25000.0 + (i * 100),
                 asset_positions={"AAPL": 17550.0},
                 prices={"AAPL": 175.50},
+                percentage_return=10.0 + (i * 0.5),
             )
         )
     
@@ -274,6 +279,7 @@ def test_apply_granularity_filter_monthly_non_first_of_month():
                 total_market_value=25000.0 + (i * 100),
                 asset_positions={"AAPL": 17550.0},
                 prices={"AAPL": 175.50},
+                percentage_return=10.0 + (i * 0.5),
             )
         )
     
@@ -312,6 +318,7 @@ def test_apply_granularity_filter_monthly_last_day_of_month():
                 total_market_value=25000.0 + (i * 100),
                 asset_positions={"AAPL": 17550.0},
                 prices={"AAPL": 175.50},
+                percentage_return=10.0 + (i * 0.5),
             )
         )
     
@@ -344,6 +351,7 @@ def test_apply_granularity_filter_invalid_granularity():
             total_market_value=25000.0,
             asset_positions={"AAPL": 17550.0},
             prices={"AAPL": 175.50},
+            percentage_return=10.5,
         ),
     ]
     
@@ -384,6 +392,7 @@ def test_portfolio_performance_endpoint_with_granularity_daily(client_with_portf
             total_market_value=25000.0 + (i * 100),
             asset_positions={"AAPL": 17550.0},
             prices={"AAPL": 175.50},
+            percentage_return=10.0 + (i * 0.5),
         )
     
     client_with_portfolio.app.state.performance_cache = performance_cache
@@ -429,6 +438,7 @@ def test_portfolio_performance_endpoint_with_granularity_weekly(client_with_port
             total_market_value=25000.0 + (i * 100),
             asset_positions={"AAPL": 17550.0},
             prices={"AAPL": 175.50},
+            percentage_return=10.0 + (i * 0.5),
         )
     
     client_with_portfolio.app.state.performance_cache = performance_cache
@@ -477,6 +487,7 @@ def test_portfolio_performance_endpoint_with_granularity_monthly(client_with_por
             total_market_value=25000.0 + (i * 100),
             asset_positions={"AAPL": 17550.0},
             prices={"AAPL": 175.50},
+            percentage_return=10.0 + (i * 0.5),
         )
     
     client_with_portfolio.app.state.performance_cache = performance_cache
@@ -523,6 +534,7 @@ def test_portfolio_performance_endpoint_invalid_granularity(client_with_portfoli
             total_market_value=25000.0,
             asset_positions={"AAPL": 17550.0},
             prices={"AAPL": 175.50},
+            percentage_return=10.5,
         ),
     }
     client_with_portfolio.app.state.performance_cache = performance_cache
@@ -555,6 +567,7 @@ def test_apply_granularity_filter_maintains_chronological_order():
                 total_market_value=25000.0 + (i * 100),
                 asset_positions={"AAPL": 17550.0},
                 prices={"AAPL": 175.50},
+                percentage_return=10.0 + (i * 0.5),
             )
         )
     
@@ -592,13 +605,14 @@ def test_apply_granularity_filter_with_missing_dates():
         date(2024, 1, 29),  # Monday, week 3
     ]
     
-    for current_date in dates_to_include:
+    for i, current_date in enumerate(dates_to_include):
         history_points.append(
             PortfolioHistoryPoint(
                 date=current_date.isoformat(),
                 total_market_value=25000.0,
                 asset_positions={"AAPL": 17550.0},
                 prices={"AAPL": 175.50},
+                percentage_return=10.0 + (i * 0.5),
             )
         )
     
@@ -632,6 +646,7 @@ def test_apply_granularity_filter_single_day_range():
             total_market_value=25000.0,
             asset_positions={"AAPL": 17550.0},
             prices={"AAPL": 175.50},
+            percentage_return=10.5,
         ),
     ]
     
@@ -690,6 +705,7 @@ def test_portfolio_performance_endpoint_default_granularity(client_with_portfoli
             total_market_value=25000.0 + (i * 100),
             asset_positions={"AAPL": 17550.0},
             prices={"AAPL": 175.50},
+            percentage_return=10.0 + (i * 0.5),
         )
     
     client_with_portfolio.app.state.performance_cache = performance_cache

@@ -736,6 +736,111 @@
         }
       }
     },
+    "/reference/{ticker}/performance": {
+      "get": {
+        "summary": "Get Reference Performance Endpoint",
+        "description": "GET endpoint to retrieve historical performance data for a reference portfolio based on a single ticker asset.\n\nCreates a reference portfolio using BuyAndHoldStrategy that converts all trades in the original\nportfolio to trades in the specified reference ticker asset, then retrieves historical performance.\n\nRequires JWT authentication.\n\nArgs:\n    ticker: Asset ticker symbol to use as reference asset\n    username: Authenticated username (from token)\n    composite_portfolio: Composite portfolio instance (injected via dependency)\n    price_service: Price service instance (injected via dependency)\n    asset_type: Asset type for the reference ticker (e.g., 'Stock', 'ETF', 'Crypto')\n    start_date: Optional start date for performance tracking (ISO format YYYY-MM-DD, defaults to portfolio start_date)\n    end_date: Optional end date for performance tracking (ISO format YYYY-MM-DD, defaults to today)\n    granularity: Granularity level - \"daily\" (default), \"weekly\" (Monday-based), or \"monthly\" (start of month)\n\nReturns:\n    PortfolioPerformanceResponse containing filtered list of PortfolioHistoryPoint objects\n\nRaises:\n    HTTPException: 400 if date format is invalid, date range is invalid, granularity is invalid, or asset_type is invalid\n    HTTPException: 422 if granularity value is invalid (handled by FastAPI Query validation)\n    HTTPException: 500 for unexpected errors or if percentage_return is unavailable in history points",
+        "operationId": "get_reference_performance_endpoint_reference__ticker__performance_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticker"
+            }
+          },
+          {
+            "name": "asset_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Asset type for the reference ticker (e.g., 'Stock', 'ETF', 'Crypto')",
+              "title": "Asset Type"
+            },
+            "description": "Asset type for the reference ticker (e.g., 'Stock', 'ETF', 'Crypto')"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start date for performance tracking (ISO format YYYY-MM-DD)",
+              "title": "Start Date"
+            },
+            "description": "Start date for performance tracking (ISO format YYYY-MM-DD)"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End date for performance tracking (ISO format YYYY-MM-DD)",
+              "title": "End Date"
+            },
+            "description": "End date for performance tracking (ISO format YYYY-MM-DD)"
+          },
+          {
+            "name": "granularity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(daily|weekly|monthly)$",
+              "description": "Granularity of history points: 'daily' (default), 'weekly' (Monday-based), or 'monthly' (start of month)",
+              "default": "daily",
+              "title": "Granularity"
+            },
+            "description": "Granularity of history points: 'daily' (default), 'weekly' (Monday-based), or 'monthly' (start of month)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioPerformanceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/asset/metadata/all": {
       "get": {
         "summary": "Get All Asset Metadata Endpoint",
@@ -1715,6 +1820,11 @@
             "type": "object",
             "title": "Prices",
             "description": "Dictionary mapping ticker symbols to asset prices on this date in USD"
+          },
+          "percentage_return": {
+            "type": "number",
+            "title": "Percentage Return",
+            "description": "Percentage return from start_date to this date (lot-based return)"
           }
         },
         "type": "object",
@@ -1722,7 +1832,8 @@
           "date",
           "total_market_value",
           "asset_positions",
-          "prices"
+          "prices",
+          "percentage_return"
         ],
         "title": "PortfolioHistoryPoint",
         "description": "Model representing a single portfolio history point."

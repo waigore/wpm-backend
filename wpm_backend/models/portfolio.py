@@ -147,6 +147,7 @@ class PortfolioHistoryPoint(BaseModel):
     total_market_value: float = Field(..., ge=0, description="Total market value of the portfolio on this date in USD")
     asset_positions: Dict[str, float] = Field(..., description="Dictionary mapping ticker symbols to position values (quantity * price) on this date")
     prices: Dict[str, float] = Field(..., description="Dictionary mapping ticker symbols to asset prices on this date in USD")
+    percentage_return: float = Field(..., description="Percentage return from start_date to this date (lot-based return)")
 
 
 class PortfolioPerformanceResponse(BaseModel):

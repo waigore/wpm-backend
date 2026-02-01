@@ -22,6 +22,7 @@ def test_get_portfolio_performance_service(mock_composite_portfolio, mock_price_
             asset_positions={"AAPL": 17550.0, "GOOGL": 7500.0},
             prices={"AAPL": 175.50, "GOOGL": 150.00},
             quantities={"AAPL": 100.0, "GOOGL": 50.0},
+            percentage_return=10.5,
         ),
         PortfolioHistoryPoint(
             date=date(2024, 1, 16),
@@ -29,6 +30,7 @@ def test_get_portfolio_performance_service(mock_composite_portfolio, mock_price_
             asset_positions={"AAPL": 18000.0, "GOOGL": 7500.0},
             prices={"AAPL": 180.00, "GOOGL": 150.00},
             quantities={"AAPL": 100.0, "GOOGL": 50.0},
+            percentage_return=12.0,
         ),
     ]
     
@@ -48,6 +50,7 @@ def test_get_portfolio_performance_service(mock_composite_portfolio, mock_price_
     assert hp1.total_market_value == 25000.0
     assert hp1.asset_positions == {"AAPL": 17550.0, "GOOGL": 7500.0}
     assert hp1.prices == {"AAPL": 175.50, "GOOGL": 150.00}
+    assert hp1.percentage_return == 10.5
     
     # Check second history point
     hp2 = history_points[1]
@@ -55,6 +58,7 @@ def test_get_portfolio_performance_service(mock_composite_portfolio, mock_price_
     assert hp2.total_market_value == 25500.0
     assert hp2.asset_positions == {"AAPL": 18000.0, "GOOGL": 7500.0}
     assert hp2.prices == {"AAPL": 180.00, "GOOGL": 150.00}
+    assert hp2.percentage_return == 12.0
 
 
 def test_portfolio_performance_endpoint(client_with_portfolio, test_settings):
@@ -82,12 +86,14 @@ def test_portfolio_performance_endpoint(client_with_portfolio, test_settings):
             total_market_value=25000.0,
             asset_positions={"AAPL": 17550.0, "GOOGL": 7500.0},
             prices={"AAPL": 175.50, "GOOGL": 150.00},
+            percentage_return=10.5,
         ),
         "2024-01-16": PortfolioHistoryPoint(
             date="2024-01-16",
             total_market_value=25500.0,
             asset_positions={"AAPL": 18000.0, "GOOGL": 7500.0},
             prices={"AAPL": 180.00, "GOOGL": 150.00},
+            percentage_return=12.0,
         ),
     }
     client_with_portfolio.app.state.performance_cache = performance_cache
@@ -112,6 +118,7 @@ def test_portfolio_performance_endpoint(client_with_portfolio, test_settings):
     assert hp1["total_market_value"] == 25000.0
     assert hp1["asset_positions"] == {"AAPL": 17550.0, "GOOGL": 7500.0}
     assert hp1["prices"] == {"AAPL": 175.50, "GOOGL": 150.00}
+    assert hp1["percentage_return"] == 10.5
 
 
 def test_portfolio_performance_endpoint_no_historical_portfolio(client_with_portfolio, test_settings):
