@@ -71,6 +71,8 @@ def create_app() -> FastAPI:
     app.state.asset_service = None
     app.state.performance_cache = None
     app.state.performance_cache_end_date = None
+    app.state.reference_portfolio_cache = None
+    app.state.reference_portfolio_cache_lock = None
 
     @app.on_event("startup")
     async def startup_event() -> None:

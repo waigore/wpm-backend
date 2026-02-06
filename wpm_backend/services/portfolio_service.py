@@ -898,43 +898,63 @@ def get_reference_portfolio_performance(
     price_service: PriceService,
     start_date: date,
     end_date: date,
+    reference_portfolio_cache: Optional[Any] = None,
+    reference_portfolio_cache_lock: Optional[Any] = None,
 ) -> List[PortfolioHistoryPoint]:
     """
     Retrieve historical performance data for a reference portfolio based on a single ticker asset.
 
-    Creates a reference portfolio using BuyAndHoldStrategy that converts all trades in the original
-    portfolio to trades in the specified reference ticker asset, then retrieves historical performance.
+    Optionally uses a cache (cachetools.FIFOCache) keyed by (ticker, asset_type). On cache hit,
+    uses the cached reference portfolio for get_historical_performance only. On cache miss,
+    creates the reference portfolio, stores it in the cache (FIFO eviction when at maxsize),
+    then retrieves performance.
 
     Args:
         portfolio: CompositePortfolio instance from wpm library
         ticker: Asset ticker symbol to use as reference asset
+        asset_type: Asset type for the reference ticker (e.g. Stock, ETF, Crypto)
         price_service: PriceService instance for fetching historical prices
         start_date: Start date for performance tracking (inclusive)
         end_date: End date for performance tracking (inclusive)
+        reference_portfolio_cache: Optional cache (e.g. cachetools.FIFOCache(maxsize=5)) for reference portfolios
+        reference_portfolio_cache_lock: Optional lock for thread-safe cache access
 
     Returns:
         List of PortfolioHistoryPoint API models, one for each day from start_date to end_date
 
     Raises:
-        ValueError: If ticker is not found in portfolio, reference portfolio creation fails,
-                   or percentage_return is None in any history point
+        ValueError: If reference portfolio creation fails or percentage_return is None in any history point
     """
     logger.info(
         f"Retrieving reference portfolio performance for ticker {ticker} "
         f"with asset_type={asset_type} from {start_date} to {end_date}"
     )
-    
+
+    key = (ticker, asset_type)
+    reference_portfolio = None
+
+    if reference_portfolio_cache is not None:
+        if reference_portfolio_cache_lock is not None:
+            reference_portfolio_cache_lock.acquire()
+        try:
+            reference_portfolio = reference_portfolio_cache.get(key)
+        finally:
+            if reference_portfolio_cache_lock is not None:
+                reference_portfolio_cache_lock.release()
+
+        if reference_portfolio is not None:
+            logger.debug(f"Reference portfolio cache hit for key {key}")
+            wpm_history_points = get_historical_performance(
+                reference_portfolio, price_service, start_date, end_date
+            )
+            logger.info(f"Retrieved {len(wpm_history_points)} history points from wpm library (cached)")
+            return _transform_reference_history_points(wpm_history_points)
+
+    # Cache miss or no cache: create reference portfolio
     try:
-        # Create Asset object for reference asset using provided asset_type
         reference_asset = Asset(ticker=ticker, asset_type=asset_type)
-        
-        # Create BuyAndHoldStrategy with reference asset
         strategy = BuyAndHoldStrategy(reference_asset=reference_asset)
-        
-        # Create CurrencyService instance
         currency_service = CurrencyService()
-        
-        # Create reference portfolio
         reference_portfolio = create_reference_portfolio(
             portfolio,
             strategy,
@@ -942,8 +962,17 @@ def get_reference_portfolio_performance(
             currency_service,
         )
         logger.info(f"Reference portfolio created for ticker {ticker}")
-        
-        # Get historical performance from reference portfolio
+
+        if reference_portfolio_cache is not None:
+            if reference_portfolio_cache_lock is not None:
+                reference_portfolio_cache_lock.acquire()
+            try:
+                reference_portfolio_cache[key] = reference_portfolio
+            finally:
+                if reference_portfolio_cache_lock is not None:
+                    reference_portfolio_cache_lock.release()
+            logger.info(f"Reference portfolio cached for key {key}")
+
         wpm_history_points = get_historical_performance(
             reference_portfolio, price_service, start_date, end_date
         )
@@ -951,30 +980,23 @@ def get_reference_portfolio_performance(
     except Exception as e:
         logger.error(f"Error creating reference portfolio or retrieving historical performance: {e}", exc_info=True)
         raise ValueError(f"Failed to retrieve reference portfolio performance: {e}")
-    
-    # Transform wpm PortfolioHistoryPoint objects to API models
+
+    return _transform_reference_history_points(wpm_history_points)
+
+
+def _transform_reference_history_points(wpm_history_points: list) -> List[PortfolioHistoryPoint]:
+    """Transform wpm PortfolioHistoryPoint objects to API models for reference portfolio performance."""
     api_history_points = []
     for wpm_history_point in wpm_history_points:
         try:
-            # Extract date and convert to ISO format string
             history_date_str = parse_date_to_iso_string(wpm_history_point.date)
-            
-            # Extract total_market_value
             total_market_value = float(wpm_history_point.total_market_value)
-            
-            # Extract asset_positions (already Dict[str, float])
             asset_positions = wpm_history_point.asset_positions
-            
-            # Extract prices (already Dict[str, float])
             prices = wpm_history_point.prices
-            
-            # Extract percentage_return and validate it's not None
             if wpm_history_point.percentage_return is None:
                 logger.error(f"percentage_return is unavailable for history point at date {history_date_str}")
                 raise ValueError(f"percentage_return is unavailable for history point at date {history_date_str}")
             percentage_return = float(wpm_history_point.percentage_return)
-            
-            # Create API PortfolioHistoryPoint model
             api_history_point = PortfolioHistoryPoint(
                 date=history_date_str,
                 total_market_value=total_market_value,
@@ -984,18 +1006,15 @@ def get_reference_portfolio_performance(
             )
             api_history_points.append(api_history_point)
         except ValueError as e:
-            # Re-raise ValueError for percentage_return issues (data integrity)
             error_str = str(e)
             if "percentage_return is unavailable" in error_str:
                 logger.error(f"Error transforming history point: {e}", exc_info=True)
                 raise
-            # For other ValueErrors, log and continue
             logger.error(f"Error transforming history point: {e}", exc_info=True)
             continue
         except Exception as e:
             logger.error(f"Error transforming history point: {e}", exc_info=True)
             continue
-    
     logger.info(f"Transformed {len(api_history_points)} history points to API models")
     return api_history_points
 

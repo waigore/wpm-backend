@@ -121,6 +121,50 @@ def test_portfolio_performance_endpoint(client_with_portfolio, test_settings):
     assert hp1["percentage_return"] == 10.5
 
 
+def test_portfolio_performance_endpoint_empty_cache_fallback(client_with_portfolio, test_settings):
+    """Test /portfolio/all/performance falls back to on-demand calculation when cache is empty."""
+    from datetime import date
+
+    login_response = client_with_portfolio.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    token = login_response.json()["access_token"]
+
+    # Empty cache (e.g. enable_performance_cache=False) - should fall back to on-demand
+    mock_historical = MagicMock()
+    mock_historical.start_date = date(2024, 1, 1)
+    client_with_portfolio.app.state.historical_portfolio = mock_historical
+    client_with_portfolio.app.state.performance_cache = {}
+    client_with_portfolio.app.state.performance_cache_end_date = None
+
+    # Mock on-demand get_portfolio_performance to return data
+    mock_points = [
+        PortfolioHistoryPoint(
+            date="2025-02-05",
+            total_market_value=10000.0,
+            asset_positions={"AAPL": 10000.0},
+            prices={"AAPL": 100.0},
+            percentage_return=5.0,
+        ),
+    ]
+    with patch(
+        "wpm_backend.api.routes.get_portfolio_performance",
+        return_value=mock_points,
+    ):
+        response = client_with_portfolio.get(
+            "/portfolio/all/performance?start_date=2025-02-05&granularity=daily",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    # Should succeed with on-demand calculation (not 500 from empty cache)
+    assert response.status_code == 200
+    data = response.json()
+    assert "history_points" in data
+    assert len(data["history_points"]) == 1
+    assert data["history_points"][0]["date"] == "2025-02-05"
+
+
 def test_portfolio_performance_endpoint_no_historical_portfolio(client_with_portfolio, test_settings):
     """Test /portfolio/all/performance endpoint when historical portfolio is not available."""
     # First, get a token

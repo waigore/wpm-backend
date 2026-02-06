@@ -1,8 +1,10 @@
 """Pytest configuration and shared fixtures."""
 
+import threading
 from decimal import Decimal
 from unittest.mock import MagicMock, Mock, patch
 
+import cachetools
 import pytest
 from fastapi.testclient import TestClient
 
@@ -165,10 +167,12 @@ def client(app):
 
 @pytest.fixture
 def client_with_portfolio(app, mock_composite_portfolio, mock_price_service, mock_asset_service):
-    """TestClient with mock portfolio, price service, and asset service in app state."""
+    """TestClient with mock portfolio, price service, asset service, and reference portfolio cache in app state."""
     app.state.composite_portfolio = mock_composite_portfolio
     app.state.historical_portfolio = mock_composite_portfolio  # Use same mock for historical portfolio in tests
     app.state.price_service = mock_price_service
     app.state.asset_service = mock_asset_service
+    app.state.reference_portfolio_cache = cachetools.FIFOCache(maxsize=5)
+    app.state.reference_portfolio_cache_lock = threading.Lock()
     return TestClient(app)
 

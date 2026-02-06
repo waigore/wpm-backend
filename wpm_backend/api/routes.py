@@ -749,6 +749,42 @@ def get_performance_cache(request: Request) -> tuple[dict[str, PortfolioHistoryP
     return cache, cache_end_date
 
 
+def get_reference_portfolio_cache(request: Request):
+    """
+    Dependency function to get reference portfolio cache from app state.
+
+    Args:
+        request: FastAPI Request object to access app.state
+
+    Returns:
+        Reference portfolio cache (cachetools.FIFOCache(maxsize=5))
+
+    Raises:
+        HTTPException: 500 if reference portfolio cache is not available
+    """
+    cache = getattr(request.app.state, "reference_portfolio_cache", None)
+    if cache is None:
+        logger.error("Reference portfolio cache not available in application state")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Reference portfolio cache not available",
+        )
+    return cache
+
+
+def get_reference_portfolio_cache_lock(request: Request):
+    """
+    Dependency function to get reference portfolio cache lock from app state.
+
+    Args:
+        request: FastAPI Request object to access app.state
+
+    Returns:
+        Lock for thread-safe cache access, or None if not set
+    """
+    return getattr(request.app.state, "reference_portfolio_cache_lock", None)
+
+
 def _handle_performance_error(
     error_str: str,
     cache: dict[str, PortfolioHistoryPoint],
@@ -945,14 +981,11 @@ def get_portfolio_performance_endpoint(
     
     # Unpack cache data
     cache, cache_end_date = cache_data
+    logger.info(f"Cache data: {cache}, cache_end_date: {cache_end_date}")
     
-    # Validate cache is not empty
-    if not cache:
-        logger.error("Performance cache is empty")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Performance cache is empty",
-        )
+    # When cache is empty (e.g. enable_performance_cache=False or cache creation failed at startup),
+    # fall back to on-demand calculation via get_portfolio_performance. Only raise 500 if cache
+    # is explicitly required but missing - we allow empty cache and use on-demand path.
     
     # Get portfolio start_date
     portfolio_start_date = historical_portfolio.start_date
@@ -1059,6 +1092,8 @@ def get_reference_performance_endpoint(
     username: str = Depends(get_current_user),
     composite_portfolio: CompositePortfolio = Depends(get_composite_portfolio),
     price_service: PriceService = Depends(get_price_service),
+    reference_portfolio_cache=Depends(get_reference_portfolio_cache),
+    reference_portfolio_cache_lock=Depends(get_reference_portfolio_cache_lock),
     asset_type: str = Query(
         ...,
         description="Asset type for the reference ticker (e.g., 'Stock', 'ETF', 'Crypto')",
@@ -1143,7 +1178,7 @@ def get_reference_performance_endpoint(
         )
     
     try:
-        # Get reference portfolio performance (always calculated on-demand, no caching)
+        # Get reference portfolio performance (uses cache when available)
         history_points = get_reference_portfolio_performance(
             composite_portfolio,
             ticker,
@@ -1151,6 +1186,8 @@ def get_reference_performance_endpoint(
             price_service,
             start_date_obj,
             end_date_obj,
+            reference_portfolio_cache=reference_portfolio_cache,
+            reference_portfolio_cache_lock=reference_portfolio_cache_lock,
         )
         
         # Apply granularity filter

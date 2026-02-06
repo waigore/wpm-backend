@@ -1,10 +1,12 @@
 """Application startup logic utilities."""
 
 import logging
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+import cachetools
 from fastapi import FastAPI
 
 from wpm import importer
@@ -236,6 +238,11 @@ async def run_startup_logic(app: FastAPI, settings: Settings) -> None:
     except Exception as e:
         logger.error(f"Failed to import CSV files: {e}", exc_info=True)
         # Continue startup even if import fails - app can still run
+
+    # Initialize reference portfolio cache (FIFO, max 5 entries, keyed by (ticker, asset_type))
+    app.state.reference_portfolio_cache = cachetools.FIFOCache(maxsize=5)
+    app.state.reference_portfolio_cache_lock = threading.Lock()
+    logger.info("Reference portfolio cache initialized (FIFOCache maxsize=5)")
 
     # Generate OpenAPI specification
     try:
