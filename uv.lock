@@ -1283,7 +1283,7 @@ wheels = [
 [[package]]
 name = "waiz-wpm"
 version = "0.0.0"
-source = { git = "https://github.com/waigore/wpmv2.git?rev=dev#921824bafd8f4f8b1cdde2d9899dabef9d077599" }
+source = { git = "https://github.com/waigore/wpmv2.git?rev=dev#8abd4c48bd9487e62ac102adba2c7dd41913b56e" }
 dependencies = [
     { name = "google-api-python-client" },
     { name = "google-auth" },

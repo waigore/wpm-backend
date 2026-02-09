@@ -103,14 +103,11 @@ def test_create_app_shutdown_event(test_settings):
 def test_create_app_startup_event_handler_exists(test_settings):
     """Test that startup event handler exists and can be called."""
     import asyncio
-    from unittest.mock import patch, MagicMock
-    
-    mock_portfolio = MagicMock()
-    mock_portfolio.get_positions.return_value = {}
-    
+    from unittest.mock import AsyncMock, patch
+
     with patch("wpm_backend.config.get_settings", return_value=test_settings):
         with patch("wpm_backend.utils.logging_config.setup_logging"):
-            with patch("wpm_backend.utils.startup.run_startup_logic") as mock_startup:
+            with patch("wpm_backend.main.run_startup_logic", new_callable=AsyncMock) as mock_startup:
                 app = create_app()
                 
                 # Verify startup event handler exists
